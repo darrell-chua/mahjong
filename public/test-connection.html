@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>连接测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .test-box {
+            background: white;
+            padding: 20px;
+            margin: 10px 0;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .status {
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 4px;
+        }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        .info { background: #d1ecf1; color: #0c5460; }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            border: none;
+            border-radius: 4px;
+            background: #007bff;
+            color: white;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        #log {
+            background: #222;
+            color: #0f0;
+            padding: 15px;
+            border-radius: 4px;
+            font-family: monospace;
+            max-height: 300px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔧 麻将游戏连接诊断工具</h1>
+    
+    <div class="test-box">
+        <h2>连接状态</h2>
+        <div id="connectionStatus" class="status info">等待测试...</div>
+    </div>
+    
+    <div class="test-box">
+        <h2>功能测试</h2>
+        <button onclick="testCreateRoom()">测试创建房间</button>
+        <button onclick="clearLog()">清空日志</button>
+        <button onclick="location.href='index.html'">返回游戏</button>
+    </div>
+    
+    <div class="test-box">
+        <h2>实时日志</h2>
+        <div id="log"></div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const statusDiv = document.getElementById('connectionStatus');
+        const logDiv = document.getElementById('log');
+        
+        function log(message, type = 'info') {
+            const time = new Date().toLocaleTimeString();
+            const color = type === 'error' ? '#f00' : type === 'success' ? '#0f0' : '#0ff';
+            logDiv.innerHTML += `<span style="color: ${color}">[${time}] ${message}</span>\n`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+            console.log(message);
+        }
+        
+        function clearLog() {
+            logDiv.innerHTML = '';
+        }
+        
+        log('正在初始化 Socket.IO 连接...');
+        
+        const socket = io({
+            reconnection: true,
+            reconnectionDelay: 1000,
+            reconnectionAttempts: 5
+        });
+        
+        socket.on('connect', () => {
+            statusDiv.className = 'status success';
+            statusDiv.textContent = '✅ 已连接到服务器 (Socket ID: ' + socket.id + ')';
+            log('Socket.IO 连接成功！', 'success');
+            log('Socket ID: ' + socket.id, 'success');
+        });
+        
+        socket.on('connect_error', (error) => {
+            statusDiv.className = 'status error';
+            statusDiv.textContent = '❌ 连接失败: ' + error.message;
+            log('连接错误: ' + error.message, 'error');
+        });
+        
+        socket.on('disconnect', (reason) => {
+            statusDiv.className = 'status error';
+            statusDiv.textContent = '⚠️ 已断开连接: ' + reason;
+            log('断开连接: ' + reason, 'error');
+        });
+        
+        socket.on('error', (data) => {
+            log('服务器错误: ' + data.message, 'error');
+        });
+        
+        socket.on('room_created', (data) => {
+            log('✅ 房间创建成功！', 'success');
+            log('房间号: ' + data.roomId, 'success');
+            log('玩家列表: ' + JSON.stringify(data.players), 'success');
+        });
+        
+        socket.on('room_joined', (data) => {
+            log('✅ 加入房间成功！', 'success');
+            log('房间号: ' + data.roomId, 'success');
+        });
+        
+        function testCreateRoom() {
+            const testRoomId = 'TEST' + Math.random().toString(36).substring(2, 6).toUpperCase();
+            const testPlayerName = '测试玩家_' + Date.now();
+            
+            log('正在尝试创建房间...');
+            log('房间ID: ' + testRoomId);
+            log('玩家名: ' + testPlayerName);
+            
+            socket.emit('create_room', {
+                roomId: testRoomId,
+                playerName: testPlayerName
+            });
+            
+            log('已发送创建房间请求，等待响应...');
+        }
+        
+        // 监听所有事件用于调试
+        const originalOn = socket.on;
+        socket.on = function(event, callback) {
+            return originalOn.call(this, event, function() {
+                if (!['connect', 'disconnect', 'connect_error'].includes(event)) {
+                    log('收到事件: ' + event + ' -> ' + JSON.stringify(arguments[0]));
+                }
+                return callback.apply(this, arguments);
+            });
+        };
+    </script>
+</body>
+</html>
+

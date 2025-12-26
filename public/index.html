@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🀄 马来西亚麻将 - 在线联机</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- 登录界面 -->
+    <div id="login-screen" class="screen active">
+        <div class="login-container">
+            <h1 class="game-title">🀄 马来西亚麻将</h1>
+            <p class="subtitle">四人联机对战</p>
+            
+            <div class="login-form">
+                <input type="text" id="player-name" placeholder="输入你的昵称" maxlength="12" />
+                
+                <div class="room-options">
+                    <button id="create-room-btn" class="btn btn-primary">创建房间</button>
+                    <div class="divider">或</div>
+                    <input type="text" id="room-id-input" placeholder="输入房间号" maxlength="6" />
+                    <button id="join-room-btn" class="btn btn-secondary">加入房间</button>
+                </div>
+            </div>
+            
+            <div class="instructions">
+                <h3>游戏说明</h3>
+                <ul>
+                    <li>4人对战，每人13张手牌</li>
+                    <li>支持吃、碰、杠、胡操作</li>
+                    <li>支持平胡、碰碰胡、清一色等番型</li>
+                    <li>轮流出牌，先胡牌者获胜</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- 等待界面 -->
+    <div id="waiting-screen" class="screen">
+        <div class="waiting-container">
+            <h2>等待玩家加入...</h2>
+            <p class="room-info">房间号: <span id="current-room-id" class="room-code"></span></p>
+            
+            <div class="players-list">
+                <div class="player-slot" id="player-slot-0">
+                    <div class="player-avatar">👤</div>
+                    <div class="player-name">等待中...</div>
+                </div>
+                <div class="player-slot" id="player-slot-1">
+                    <div class="player-avatar">👤</div>
+                    <div class="player-name">等待中...</div>
+                </div>
+                <div class="player-slot" id="player-slot-2">
+                    <div class="player-avatar">👤</div>
+                    <div class="player-name">等待中...</div>
+                </div>
+                <div class="player-slot" id="player-slot-3">
+                    <div class="player-avatar">👤</div>
+                    <div class="player-name">等待中...</div>
+                </div>
+            </div>
+            
+            <button id="start-game-btn" class="btn btn-start" disabled>开始游戏 (需要4名玩家)</button>
+            <button id="leave-room-btn" class="btn btn-secondary">离开房间</button>
+        </div>
+    </div>
+
+    <!-- 游戏界面 -->
+    <div id="game-screen" class="screen">
+        <div class="game-container">
+            <!-- 顶部信息栏 -->
+            <div class="game-header">
+                <div class="game-info">
+                    <span class="info-item">房间: <span id="game-room-id"></span></span>
+                    <span class="info-item">剩余牌数: <span id="wall-count">0</span></span>
+                    <span class="info-item">当前回合: <span id="current-turn-name"></span></span>
+                </div>
+            </div>
+
+            <!-- 游戏主区域 -->
+            <div class="game-board">
+                <!-- 对手3 (上方) -->
+                <div class="opponent opponent-top" id="opponent-2">
+                    <div class="opponent-info">
+                        <span class="opponent-name"></span>
+                        <span class="opponent-hand-count">🀄 × 13</span>
+                    </div>
+                    <div class="opponent-melds"></div>
+                    <div class="opponent-discarded"></div>
+                </div>
+
+                <!-- 中间区域 -->
+                <div class="game-middle">
+                    <!-- 对手2 (左侧) -->
+                    <div class="opponent opponent-left" id="opponent-1">
+                        <div class="opponent-info">
+                            <span class="opponent-name"></span>
+                            <span class="opponent-hand-count">🀄 × 13</span>
+                        </div>
+                        <div class="opponent-melds"></div>
+                        <div class="opponent-discarded"></div>
+                    </div>
+
+                    <!-- 弃牌池 -->
+                    <div class="discard-pool" id="discard-pool">
+                        <div class="pool-label">弃牌池</div>
+                        <div class="pool-tiles"></div>
+                    </div>
+
+                    <!-- 对手4 (右侧) -->
+                    <div class="opponent opponent-right" id="opponent-3">
+                        <div class="opponent-info">
+                            <span class="opponent-name"></span>
+                            <span class="opponent-hand-count">🀄 × 13</span>
+                        </div>
+                        <div class="opponent-melds"></div>
+                        <div class="opponent-discarded"></div>
+                    </div>
+                </div>
+
+                <!-- 玩家区域 (下方) -->
+                <div class="player-area">
+                    <div class="player-melds" id="player-melds"></div>
+                    <div class="player-hand" id="player-hand"></div>
+                    <div class="player-info">
+                        <span id="player-name-display"></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 操作按钮 -->
+            <div class="action-buttons" id="action-buttons" style="display: none;">
+                <button class="action-btn btn-chow" id="btn-chow">吃</button>
+                <button class="action-btn btn-pong" id="btn-pong">碰</button>
+                <button class="action-btn btn-kong" id="btn-kong">杠</button>
+                <button class="action-btn btn-win" id="btn-win">胡</button>
+                <button class="action-btn btn-pass" id="btn-pass">过</button>
+            </div>
+
+            <!-- 摸牌按钮 -->
+            <div class="draw-button-container" id="draw-button-container" style="display: none;">
+                <button class="btn btn-draw" id="btn-draw">摸牌</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 游戏结束弹窗 -->
+    <div id="game-over-modal" class="modal">
+        <div class="modal-content">
+            <h2 id="modal-title"></h2>
+            <div id="modal-body"></div>
+            <button class="btn btn-primary" id="modal-close">确定</button>
+        </div>
+    </div>
+
+    <!-- 提示消息 -->
+    <div id="toast" class="toast"></div>
+
+    <!-- Socket.IO 客户端 -->
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="client.js"></script>
+</body>
+</html>
