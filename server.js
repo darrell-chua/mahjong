@@ -102,6 +102,7 @@ class Room {
     }];
     this.deck = [];
     this.currentPlayerIndex = 0;
+    this.dealerIndex = 0; // 庄家索引，初始为房主（索引0）
     this.gameStarted = false;
     this.lastDiscard = null;
     this.turnTimer = null;
@@ -139,6 +140,7 @@ class Room {
     this.gameStarted = true;
     this.deck = createDeck();
     this.wall = [...this.deck];
+    this.dealerIndex = 0; // 第一局，庄家是房主（索引0）
     
     // 发牌：每人13张
     this.players.forEach(player => {
@@ -151,8 +153,8 @@ class Room {
       player.melds = [];
     });
     
-    // 庄家（房主，索引0）起手额外摸一张，起手14张后先打牌
-    this.currentPlayerIndex = 0;
+    // 庄家起手额外摸一张，起手14张后先打牌
+    this.currentPlayerIndex = this.dealerIndex;
     const dealer = this.players[this.currentPlayerIndex];
     const dealerExtra = this.wall.shift();
     if (dealerExtra) {
@@ -550,11 +552,14 @@ class Room {
   resetGame() {
     if (this.players.length !== 4) return false;
     
+    // 轮换庄家：下一局庄家是当前庄家的下一个玩家
+    this.dealerIndex = (this.dealerIndex + 1) % this.players.length;
+    
     // 重置游戏状态
     this.deck = createDeck();
     this.wall = [...this.deck];
     this.lastDiscard = null;
-    this.currentPlayerIndex = 0;
+    this.currentPlayerIndex = this.dealerIndex; // 新的庄家
     
     // 重置每个玩家的游戏数据，保留名字和分数
     this.players.forEach(player => {
@@ -572,7 +577,7 @@ class Room {
       player.hand = sortTiles(player.hand);
     });
     
-    // 庄家（房主，索引0）起手额外摸一张
+    // 庄家起手额外摸一张
     const dealer = this.players[this.currentPlayerIndex];
     const dealerExtra = this.wall.shift();
     if (dealerExtra) {
