@@ -660,6 +660,42 @@ body {
     opacity: 1;
 }
 
+/* 右上角游戏通知（摸牌、弃牌） */
+.game-notification {
+    position: fixed;
+    top: 30px;
+    right: 30px;
+    background: var(--bg-card);
+    color: var(--text-primary);
+    padding: 12px 24px;
+    border-radius: 10px;
+    box-shadow: 0 5px 20px rgba(0, 0, 0, 0.5);
+    border: 2px solid var(--gold);
+    z-index: 2000;
+    opacity: 0;
+    transform: translateX(400px);
+    transition: all 0.3s ease;
+    font-size: 1rem;
+    max-width: 300px;
+    word-wrap: break-word;
+}
+
+.game-notification.show {
+    transform: translateX(0);
+    opacity: 1;
+}
+
+/* 响应式：小屏幕时调整位置 */
+@media (max-width: 768px) {
+    .game-notification {
+        top: 20px;
+        right: 20px;
+        max-width: 250px;
+        font-size: 0.9rem;
+        padding: 10px 20px;
+    }
+}
+
 /* 响应式设计 */
 @media (max-width: 1200px) {
     .game-middle {

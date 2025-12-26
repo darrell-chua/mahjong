@@ -76,6 +76,17 @@ function showToast(message, duration = 3000) {
     }, duration);
 }
 
+// 显示右上角游戏通知（用于摸牌、弃牌等）
+function showGameNotification(message, duration = 2000) {
+    const notification = document.getElementById('game-notification');
+    notification.textContent = message;
+    notification.classList.add('show');
+    
+    setTimeout(() => {
+        notification.classList.remove('show');
+    }, duration);
+}
+
 function generateRoomId() {
     return Math.random().toString(36).substring(2, 8).toUpperCase();
 }
@@ -404,7 +415,7 @@ socket.on('game_started', (data) => {
 socket.on('tile_drawn', (data) => {
     gameState.hand.push(data.tile);
     renderHand();
-    showToast('摸牌: ' + TILE_DISPLAY[data.tile]);
+    showGameNotification('摸牌: ' + TILE_DISPLAY[data.tile]);
     
     // 隐藏摸牌按钮
     drawButtonContainer.style.display = 'none';
@@ -448,7 +459,7 @@ socket.on('tile_played', (data) => {
     tileEl.classList.add('tile-appear');
     poolTiles.appendChild(tileEl);
     
-    showToast(`${gameState.players[data.playerIndex].name} 打出 ${TILE_DISPLAY[data.tile]}`);
+    showGameNotification(`${gameState.players[data.playerIndex].name} 打出 ${TILE_DISPLAY[data.tile]}`);
 });
 
 socket.on('can_claim', (data) => {
@@ -574,7 +585,7 @@ socket.on('kong_claimed', (data) => {
 
 // 杠牌后摸牌的通知
 socket.on('tile_drawn_after_kong', (data) => {
-    showToast('杠牌后摸到：' + TILE_DISPLAY[data.tile]);
+    showGameNotification('杠牌后摸到：' + TILE_DISPLAY[data.tile]);
     // 杠后自动摸牌，允许直接出牌
     gameState.hasDrawnThisTurn = true;
     gameState.canPlayWithoutDraw = true;
