@@ -106,6 +106,8 @@ class Room {
     this.lastDiscard = null;
     this.turnTimer = null;
     this.wall = []; // 剩余牌墙
+    this.pendingClaim = null; // 当前等待的操作 { playerId, action, priority, timestamp }
+    // 优先级：胡=4, 杠=3, 碰=2, 吃=1
   }
 
   addPlayer(playerId, playerName) {
@@ -248,8 +250,47 @@ class Room {
     return count >= 3;
   }
 
+  // 检查是否可以执行某个操作（考虑优先级）
+  canExecuteAction(playerId, action) {
+    if (!this.pendingClaim) return true; // 没有待处理的操作
+    
+    // 操作优先级：胡=4, 杠=3, 碰=2, 吃=1
+    const priority = {
+      'win': 4,
+      'kong': 3,
+      'pong': 2,
+      'chow': 1
+    };
+    
+    const currentPriority = priority[this.pendingClaim.action] || 0;
+    const requestPriority = priority[action] || 0;
+    
+    // 如果当前操作优先级更高或相同，且是同一个玩家，允许执行
+    if (this.pendingClaim.playerId === playerId && currentPriority >= requestPriority) {
+      return true;
+    }
+    
+    // 如果请求的操作优先级更高，可以抢占
+    if (requestPriority > currentPriority) {
+      return true;
+    }
+    
+    // 否则不允许执行
+    return false;
+  }
+
+  // 取消当前待处理的操作
+  cancelPendingClaim() {
+    this.pendingClaim = null;
+  }
+
   performPong(playerId) {
     if (!this.canPong(playerId)) return false;
+    
+    // 检查是否可以执行（考虑优先级）
+    if (!this.canExecuteAction(playerId, 'pong')) {
+      return false;
+    }
     
     const player = this.players.find(p => p.id === playerId);
     const tile = this.lastDiscard.tile;
@@ -268,6 +309,7 @@ class Room {
     discardPlayer.discarded.pop();
     
     this.lastDiscard = null;
+    this.pendingClaim = null; // 清除待处理操作
     
     // 碰牌的玩家继续出牌（不摸牌，不进入下一回合）
     this.currentPlayerIndex = this.players.findIndex(p => p.id === playerId);
@@ -280,6 +322,11 @@ class Room {
 
   performChow(playerId, combination) {
     if (!this.canChow(playerId)) return false;
+    
+    // 检查是否可以执行（考虑优先级）
+    if (!this.canExecuteAction(playerId, 'chow')) {
+      return false;
+    }
     
     const player = this.players.find(p => p.id === playerId);
     const tile = this.lastDiscard.tile;
@@ -300,6 +347,7 @@ class Room {
     discardPlayer.discarded.pop();
     
     this.lastDiscard = null;
+    this.pendingClaim = null; // 清除待处理操作
     
     // 吃牌的玩家继续出牌（不摸牌，不进入下一回合）
     this.currentPlayerIndex = this.players.findIndex(p => p.id === playerId);
@@ -312,6 +360,11 @@ class Room {
 
   performKong(playerId) {
     if (!this.canKong(playerId)) return false;
+    
+    // 检查是否可以执行（考虑优先级）
+    if (!this.canExecuteAction(playerId, 'kong')) {
+      return false;
+    }
     
     const player = this.players.find(p => p.id === playerId);
     const tile = this.lastDiscard.tile;
@@ -330,6 +383,7 @@ class Room {
     discardPlayer.discarded.pop();
     
     this.lastDiscard = null;
+    this.pendingClaim = null; // 清除待处理操作
     
     // 杠牌后摸一张牌
     const drawnTile = this.wall.shift();
@@ -703,20 +757,28 @@ io.on('connection', (socket) => {
       playerIndex: room.currentPlayerIndex
     });
     
+    // 重置待处理操作
+    room.pendingClaim = null;
+    
     // 检查其他玩家是否可以吃碰杠胡
     const canClaim = [];
     room.players.forEach((player, index) => {
       if (player.id !== socket.id) {
+        const canWin = room.checkWin(player.id, false) !== null;
+        const canKong = room.canKong(player.id);
+        const canPong = room.canPong(player.id);
+        const canChow = room.canChow(player.id);
+        
         const claims = {
           playerId: player.id,
           playerIndex: index,
-          canPong: room.canPong(player.id),
-          canChow: room.canChow(player.id),
-          canKong: room.canKong(player.id),
-          canWin: room.checkWin(player.id, false) !== null
+          canPong: canPong,
+          canChow: canChow,
+          canKong: canKong,
+          canWin: canWin
         };
         
-        if (claims.canPong || claims.canChow || claims.canKong || claims.canWin) {
+        if (canPong || canChow || canKong || canWin) {
           canClaim.push(claims);
           io.to(player.id).emit('can_claim', claims);
         }
@@ -746,30 +808,52 @@ io.on('connection', (socket) => {
     
     if (!room || !room.gameStarted) return;
     
-    if (room.performPong(socket.id)) {
-      const player = room.players.find(p => p.id === socket.id);
+    // 检查是否有更高优先级的操作待处理
+    if (room.pendingClaim && room.pendingClaim.action !== 'pong' && room.pendingClaim.playerId !== socket.id) {
+      const priority = { 'win': 4, 'kong': 3, 'pong': 2, 'chow': 1 };
+      if (priority[room.pendingClaim.action] > priority['pong']) {
+        socket.emit('error', { message: '有更高优先级的操作正在进行' });
+        return;
+      }
+    }
+    
+    // 设置待处理操作
+    if (!room.pendingClaim || room.canExecuteAction(socket.id, 'pong')) {
+      room.pendingClaim = { playerId: socket.id, action: 'pong', timestamp: Date.now() };
       
-      io.to(roomId).emit('pong_claimed', {
-        playerId: socket.id,
-        playerIndex: room.currentPlayerIndex,
-        melds: player.melds
-      });
-      
-      socket.emit('update_hand', { hand: player.hand });
-      
-      io.to(roomId).emit('game_state', {
-        currentPlayerIndex: room.currentPlayerIndex,
-        players: room.players.map(p => ({
-          id: p.id,
-          name: p.name,
-          handCount: p.hand.length,
-          discarded: p.discarded,
-          melds: p.melds
-        }))
-      });
-      
-      // 通知碰牌玩家可以直接出牌（手牌13张）
-      socket.emit('can_play', { message: '请出牌' });
+      if (room.performPong(socket.id)) {
+        const player = room.players.find(p => p.id === socket.id);
+        
+        // 通知其他玩家操作被取消
+        io.to(roomId).emit('claim_cancelled', { message: '有其他玩家执行了更高优先级的操作' });
+        
+        io.to(roomId).emit('pong_claimed', {
+          playerId: socket.id,
+          playerIndex: room.currentPlayerIndex,
+          melds: player.melds
+        });
+        
+        socket.emit('update_hand', { hand: player.hand });
+        
+        io.to(roomId).emit('game_state', {
+          currentPlayerIndex: room.currentPlayerIndex,
+          players: room.players.map(p => ({
+            id: p.id,
+            name: p.name,
+            handCount: p.hand.length,
+            discarded: p.discarded,
+            melds: p.melds
+          }))
+        });
+        
+        // 通知碰牌玩家可以直接出牌（手牌13张）
+        socket.emit('can_play', { message: '请出牌' });
+      } else {
+        room.pendingClaim = null;
+        socket.emit('error', { message: '碰牌失败' });
+      }
+    } else {
+      socket.emit('error', { message: '有其他玩家正在操作，请稍候' });
     }
   });
 
@@ -779,6 +863,12 @@ io.on('connection', (socket) => {
     const room = rooms.get(roomId);
     
     if (!room || !room.gameStarted) return;
+    
+    // 检查是否有更高优先级的操作待处理（吃是最低优先级）
+    if (room.pendingClaim && room.pendingClaim.playerId !== socket.id) {
+      socket.emit('error', { message: '有其他玩家正在执行更高优先级的操作（碰/杠/胡）' });
+      return;
+    }
     
     // 如果前端未提供组合，让服务器自动选择第一组可吃组合
     let chosenCombo = data.combination;
@@ -793,30 +883,43 @@ io.on('connection', (socket) => {
       chosenCombo = combos[0];
     }
     
-    if (room.performChow(socket.id, chosenCombo)) {
-      const player = room.players.find(p => p.id === socket.id);
+    // 设置待处理操作
+    if (!room.pendingClaim || room.canExecuteAction(socket.id, 'chow')) {
+      room.pendingClaim = { playerId: socket.id, action: 'chow', timestamp: Date.now() };
       
-      io.to(roomId).emit('chow_claimed', {
-        playerId: socket.id,
-        playerIndex: room.currentPlayerIndex,
-        melds: player.melds
-      });
-      
-      socket.emit('update_hand', { hand: player.hand });
-      
-      io.to(roomId).emit('game_state', {
-        currentPlayerIndex: room.currentPlayerIndex,
-        players: room.players.map(p => ({
-          id: p.id,
-          name: p.name,
-          handCount: p.hand.length,
-          discarded: p.discarded,
-          melds: p.melds
-        }))
-      });
-      
-      // 通知吃牌玩家可以直接出牌（手牌13张）
-      socket.emit('can_play', { message: '请出牌' });
+      if (room.performChow(socket.id, chosenCombo)) {
+        const player = room.players.find(p => p.id === socket.id);
+        
+        // 通知其他玩家操作被取消
+        io.to(roomId).emit('claim_cancelled', { message: '有其他玩家执行了操作' });
+        
+        io.to(roomId).emit('chow_claimed', {
+          playerId: socket.id,
+          playerIndex: room.currentPlayerIndex,
+          melds: player.melds
+        });
+        
+        socket.emit('update_hand', { hand: player.hand });
+        
+        io.to(roomId).emit('game_state', {
+          currentPlayerIndex: room.currentPlayerIndex,
+          players: room.players.map(p => ({
+            id: p.id,
+            name: p.name,
+            handCount: p.hand.length,
+            discarded: p.discarded,
+            melds: p.melds
+          }))
+        });
+        
+        // 通知吃牌玩家可以直接出牌（手牌13张）
+        socket.emit('can_play', { message: '请出牌' });
+      } else {
+        room.pendingClaim = null;
+        socket.emit('error', { message: '吃牌失败' });
+      }
+    } else {
+      socket.emit('error', { message: '有其他玩家正在操作，请稍候' });
     }
   });
 
@@ -827,48 +930,67 @@ io.on('connection', (socket) => {
     
     if (!room || !room.gameStarted) return;
     
-    const drawnTile = room.performKong(socket.id);
+    // 检查是否有更高优先级的操作待处理（胡）
+    if (room.pendingClaim && room.pendingClaim.action === 'win' && room.pendingClaim.playerId !== socket.id) {
+      socket.emit('error', { message: '有玩家正在胡牌' });
+      return;
+    }
     
-    if (drawnTile) {
-      const player = room.players.find(p => p.id === socket.id);
+    // 设置待处理操作
+    if (!room.pendingClaim || room.canExecuteAction(socket.id, 'kong')) {
+      room.pendingClaim = { playerId: socket.id, action: 'kong', timestamp: Date.now() };
       
-      // 检查杠牌后是否可以自摸
-      const canSelfWin = room.checkWin(socket.id, true);
+      const drawnTile = room.performKong(socket.id);
       
-      io.to(roomId).emit('kong_claimed', {
-        playerId: socket.id,
-        playerIndex: room.currentPlayerIndex,
-        melds: player.melds
-      });
-      
-      socket.emit('update_hand', { hand: player.hand });
-      socket.emit('tile_drawn_after_kong', { 
-        tile: drawnTile,
-        message: '杠牌后摸牌，请出牌',
-        canSelfWin: canSelfWin !== null
-      });
-      
-      // 如果可以自摸，通知玩家
-      if (canSelfWin) {
-        socket.emit('can_self_win', {
-          canWin: true
+      if (drawnTile) {
+        const player = room.players.find(p => p.id === socket.id);
+        
+        // 通知其他玩家操作被取消
+        io.to(roomId).emit('claim_cancelled', { message: '有其他玩家执行了更高优先级的操作' });
+        
+        // 检查杠牌后是否可以自摸
+        const canSelfWin = room.checkWin(socket.id, true);
+        
+        io.to(roomId).emit('kong_claimed', {
+          playerId: socket.id,
+          playerIndex: room.currentPlayerIndex,
+          melds: player.melds
+        });
+        
+        socket.emit('update_hand', { hand: player.hand });
+        socket.emit('tile_drawn_after_kong', { 
+          tile: drawnTile,
+          message: '杠牌后摸牌，请出牌',
+          canSelfWin: canSelfWin !== null
+        });
+        
+        // 如果可以自摸，通知玩家
+        if (canSelfWin) {
+          socket.emit('can_self_win', {
+            canWin: true
+          });
+        } else {
+          // 如果不能自摸，通知杠牌玩家可以直接出牌（手牌14张）
+          socket.emit('can_play', { message: '杠牌后已摸牌，请出牌' });
+        }
+        
+        io.to(roomId).emit('game_state', {
+          currentPlayerIndex: room.currentPlayerIndex,
+          wallCount: room.wall.length,
+          players: room.players.map(p => ({
+            id: p.id,
+            name: p.name,
+            handCount: p.hand.length,
+            discarded: p.discarded,
+            melds: p.melds
+          }))
         });
       } else {
-        // 如果不能自摸，通知杠牌玩家可以直接出牌（手牌14张）
-        socket.emit('can_play', { message: '杠牌后已摸牌，请出牌' });
+        room.pendingClaim = null;
+        socket.emit('error', { message: '杠牌失败' });
       }
-      
-      io.to(roomId).emit('game_state', {
-        currentPlayerIndex: room.currentPlayerIndex,
-        wallCount: room.wall.length,
-        players: room.players.map(p => ({
-          id: p.id,
-          name: p.name,
-          handCount: p.hand.length,
-          discarded: p.discarded,
-          melds: p.melds
-        }))
-      });
+    } else {
+      socket.emit('error', { message: '有其他玩家正在操作，请稍候' });
     }
   });
 
@@ -879,11 +1001,23 @@ io.on('connection', (socket) => {
     
     if (!room || !room.gameStarted) return;
     
+    // 胡牌优先级最高，总是可以执行（除非已经有其他人在胡）
+    if (room.pendingClaim && room.pendingClaim.action === 'win' && room.pendingClaim.playerId !== socket.id) {
+      socket.emit('error', { message: '其他玩家已经胡牌' });
+      return;
+    }
+    
+    // 设置待处理操作（胡牌优先级最高）
+    room.pendingClaim = { playerId: socket.id, action: 'win', timestamp: Date.now() };
+    
     const winResult = room.checkWin(socket.id, isSelfDraw);
     
     if (winResult && winResult.win) {
       const winner = room.players.find(p => p.id === socket.id);
       const winnerIndex = room.players.findIndex(p => p.id === socket.id);
+      
+      // 通知其他玩家操作被取消（胡牌是最高的）
+      io.to(roomId).emit('claim_cancelled', { message: '有玩家胡牌，本局结束' });
       
       io.to(roomId).emit('game_over', {
         type: 'win',
@@ -896,8 +1030,12 @@ io.on('connection', (socket) => {
         isSelfDraw
       });
       
+      // 清除待处理操作
+      room.pendingClaim = null;
+      
       console.log(`${winner.name} 胡牌! 番型: ${winResult.fan.types.join(', ')}, 番数: ${winResult.fan.count}`);
     } else {
+      room.pendingClaim = null;
       socket.emit('error', { message: '不能胡牌' });
     }
   });
@@ -909,19 +1047,43 @@ io.on('connection', (socket) => {
     
     if (!room || !room.gameStarted) return;
     
-    // 继续下一轮
-    room.nextTurn();
+    // 如果当前玩家有待处理的操作，取消它
+    if (room.pendingClaim && room.pendingClaim.playerId === socket.id) {
+      room.pendingClaim = null;
+    }
     
-    io.to(roomId).emit('next_turn', {
-      currentPlayerIndex: room.currentPlayerIndex,
-      players: room.players.map(p => ({
-        id: p.id,
-        name: p.name,
-        handCount: p.hand.length,
-        discarded: p.discarded,
-        melds: p.melds
-      }))
-    });
+    // 检查是否还有其他玩家可以操作
+    const stillCanClaim = [];
+    if (room.lastDiscard) {
+      room.players.forEach((player, index) => {
+        if (player.id !== socket.id) {
+          const canWin = room.checkWin(player.id, false) !== null;
+          const canKong = room.canKong(player.id);
+          const canPong = room.canPong(player.id);
+          const canChow = room.canChow(player.id);
+          
+          if (canWin || canKong || canPong || canChow) {
+            stillCanClaim.push(player.id);
+          }
+        }
+      });
+    }
+    
+    // 如果没有人可以操作了，进入下一轮
+    if (stillCanClaim.length === 0) {
+      room.nextTurn();
+      
+      io.to(roomId).emit('next_turn', {
+        currentPlayerIndex: room.currentPlayerIndex,
+        players: room.players.map(p => ({
+          id: p.id,
+          name: p.name,
+          handCount: p.hand.length,
+          discarded: p.discarded,
+          melds: p.melds
+        }))
+      });
+    }
   });
 
   // 继续游戏（新一局）

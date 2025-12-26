@@ -15,7 +15,9 @@ let gameState = {
     // 当服务器发出 can_play（例如吃/碰/杠后）时，允许不摸直接出牌
     canPlayWithoutDraw: false,
     // 本回合是否已摸过牌（用于允许摸后出牌，即使手牌绝对数量不是14）
-    hasDrawnThisTurn: false
+    hasDrawnThisTurn: false,
+    // 操作超时定时器
+    claimTimeout: null
 };
 
 // 麻将牌显示映射
@@ -467,14 +469,35 @@ socket.on('can_claim', (data) => {
     document.getElementById('btn-pong').style.display = data.canPong ? 'inline-block' : 'none';
     document.getElementById('btn-kong').style.display = data.canKong ? 'inline-block' : 'none';
     document.getElementById('btn-win').style.display = data.canWin ? 'inline-block' : 'none';
+    document.getElementById('btn-pass').style.display = 'inline-block';
     
     // 设置超时自动过
-    setTimeout(() => {
+    if (gameState.claimTimeout) {
+        clearTimeout(gameState.claimTimeout);
+    }
+    gameState.claimTimeout = setTimeout(() => {
         if (actionButtons.style.display === 'flex') {
             socket.emit('pass', { roomId: gameState.roomId });
             actionButtons.style.display = 'none';
         }
     }, 10000); // 10秒超时
+});
+
+// 操作被取消的通知
+socket.on('claim_cancelled', (data) => {
+    // 清除超时
+    if (gameState.claimTimeout) {
+        clearTimeout(gameState.claimTimeout);
+        gameState.claimTimeout = null;
+    }
+    
+    // 隐藏操作按钮
+    actionButtons.style.display = 'none';
+    
+    // 显示提示
+    if (data.message) {
+        showToast(data.message);
+    }
 });
 
 socket.on('next_turn', (data) => {
@@ -719,6 +742,12 @@ document.getElementById('btn-draw').addEventListener('click', () => {
 });
 
 document.getElementById('btn-chow').addEventListener('click', () => {
+    // 清除超时
+    if (gameState.claimTimeout) {
+        clearTimeout(gameState.claimTimeout);
+        gameState.claimTimeout = null;
+    }
+    
     // 简化处理：使用第一个可用的吃牌组合
     // 实际应该让玩家选择
     socket.emit('claim_chow', {
@@ -729,16 +758,34 @@ document.getElementById('btn-chow').addEventListener('click', () => {
 });
 
 document.getElementById('btn-pong').addEventListener('click', () => {
+    // 清除超时
+    if (gameState.claimTimeout) {
+        clearTimeout(gameState.claimTimeout);
+        gameState.claimTimeout = null;
+    }
+    
     socket.emit('claim_pong', { roomId: gameState.roomId });
     actionButtons.style.display = 'none';
 });
 
 document.getElementById('btn-kong').addEventListener('click', () => {
+    // 清除超时
+    if (gameState.claimTimeout) {
+        clearTimeout(gameState.claimTimeout);
+        gameState.claimTimeout = null;
+    }
+    
     socket.emit('claim_kong', { roomId: gameState.roomId });
     actionButtons.style.display = 'none';
 });
 
 document.getElementById('btn-win').addEventListener('click', () => {
+    // 清除超时
+    if (gameState.claimTimeout) {
+        clearTimeout(gameState.claimTimeout);
+        gameState.claimTimeout = null;
+    }
+    
     // 判断是自摸还是点炮
     // 如果是在摸牌后（hasDrawnThisTurn为true）或者手牌14张，则是自摸
     // 否则是点炮
@@ -752,6 +799,12 @@ document.getElementById('btn-win').addEventListener('click', () => {
 });
 
 document.getElementById('btn-pass').addEventListener('click', () => {
+    // 清除超时
+    if (gameState.claimTimeout) {
+        clearTimeout(gameState.claimTimeout);
+        gameState.claimTimeout = null;
+    }
+    
     socket.emit('pass', { roomId: gameState.roomId });
     actionButtons.style.display = 'none';
 });
