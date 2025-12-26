@@ -598,8 +598,14 @@ io.on('connection', (socket) => {
   socket.on('create_room', (data) => {
     const { roomId, playerName } = data;
     
+    // 验证房间号格式（6位字符）
+    if (!roomId || roomId.length !== 6 || !/^[A-Z0-9]{6}$/.test(roomId)) {
+      socket.emit('error', { message: '房间号必须是6位字母或数字' });
+      return;
+    }
+    
     if (rooms.has(roomId)) {
-      socket.emit('error', { message: '房间已存在' });
+      socket.emit('error', { message: '房间已存在，请使用"加入房间"或选择其他房间号' });
       return;
     }
     

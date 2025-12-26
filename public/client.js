@@ -313,8 +313,11 @@ socket.on('room_created', (data) => {
         slot.querySelector('.player-avatar').textContent = '👤';
     });
     
+    // 清空房间号输入框，避免混淆
+    roomIdInput.value = '';
+    
     showScreen(waitingScreen);
-    showToast('房间创建成功！');
+    showToast('房间创建成功！房间号: ' + data.roomId);
 });
 
 socket.on('player_joined', (data) => {
@@ -704,8 +707,15 @@ createRoomBtn.addEventListener('click', () => {
         return;
     }
     
+    // 生成随机房间号（创建新房间总是使用新房间号）
     const roomId = generateRoomId();
+    
     gameState.playerName = playerName;
+    gameState.roomId = roomId;
+    currentRoomId.textContent = roomId;
+    
+    // 清空房间号输入框
+    roomIdInput.value = '';
     
     socket.emit('create_room', { roomId, playerName });
 });
@@ -721,6 +731,11 @@ joinRoomBtn.addEventListener('click', () => {
     
     if (!roomId) {
         showToast('请输入房间号！');
+        return;
+    }
+    
+    if (roomId.length !== 6) {
+        showToast('房间号必须是6位字符！');
         return;
     }
     
