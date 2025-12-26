@@ -1107,18 +1107,23 @@ io.on('connection', (socket) => {
       return;
     }
     
-    if (room.players[0].id !== socket.id) {
+    if (room.players.length === 0 || room.players[0].id !== socket.id) {
       socket.emit('error', { message: '只有房主可以开始新一局' });
       return;
     }
     
-    if (room.players.length !== 4) {
-      socket.emit('error', { message: '需要4名玩家才能继续' });
+    // 允许在有玩家离开的情况下继续游戏（只要至少还有1个玩家）
+    if (room.players.length < 1) {
+      socket.emit('error', { message: '房间中没有玩家' });
       return;
     }
     
+    // 如果有玩家离开了，我们需要调整玩家索引
+    // 但为了简化，我们要求至少2个玩家才能继续（或者可以允许继续）
+    // 这里我们允许继续，即使玩家数量少于4
+    
     if (!room.resetGame()) {
-      socket.emit('error', { message: '无法重置游戏' });
+      socket.emit('error', { message: '无法重置游戏，玩家数量不足' });
       return;
     }
     

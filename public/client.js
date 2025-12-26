@@ -351,18 +351,62 @@ socket.on('player_joined', (data) => {
 socket.on('player_left', (data) => {
     showToast('有玩家离开了房间');
     
+    // 更新游戏状态中的玩家列表
+    gameState.players = data.players.map(p => ({
+        id: p.id,
+        name: p.name,
+        handCount: 0,
+        discarded: [],
+        melds: [],
+        score: p.score
+    }));
+    
+    // 如果游戏结束模态框正在显示，更新按钮状态
+    if (gameOverModal.classList.contains('active')) {
+        const isHost = gameState.playerIndex === 0;
+        const playerCount = data.players.length;
+        
+        // 更新按钮文本，显示当前玩家数量
+        const continueBtn = document.getElementById('modal-continue');
+        const closeBtn = document.getElementById('modal-close-new');
+        
+        if (continueBtn && isHost) {
+            if (playerCount < 4) {
+                continueBtn.textContent = `继续游戏 (${playerCount}/4)`;
+                continueBtn.disabled = false; // 允许房主决定是否继续
+            } else {
+                continueBtn.textContent = '继续游戏';
+                continueBtn.disabled = false;
+            }
+        }
+        
+        if (closeBtn && !isHost) {
+            closeBtn.textContent = `等待房主继续 (${playerCount}/4)`;
+        }
+    }
+    
     // 清空所有槽位
     for (let i = 0; i < 4; i++) {
         const slot = document.getElementById(`player-slot-${i}`);
-        slot.classList.remove('filled');
-        slot.querySelector('.player-name').textContent = '等待中...';
+        if (slot) {
+            slot.classList.remove('filled');
+            const nameEl = slot.querySelector('.player-name');
+            if (nameEl) {
+                nameEl.textContent = '等待中...';
+            }
+        }
     }
     
     // 更新玩家列表
     data.players.forEach((player, index) => {
         const slot = document.getElementById(`player-slot-${index}`);
-        slot.classList.add('filled');
-        slot.querySelector('.player-name').textContent = player.name;
+        if (slot) {
+            slot.classList.add('filled');
+            const nameEl = slot.querySelector('.player-name');
+            if (nameEl) {
+                nameEl.textContent = player.name;
+            }
+        }
     });
 });
 
@@ -668,13 +712,21 @@ socket.on('game_over', (data) => {
     let buttonsHTML = `<div style="display: flex; gap: 10px; justify-content: center; margin-top: 20px;">`;
     if (isHost) {
         buttonsHTML += `<button id="modal-continue" class="btn btn-primary">继续游戏</button>`;
+        buttonsHTML += `<button id="modal-close-new" class="btn btn-secondary">退出游戏</button>`;
+    } else {
+        // 其他玩家显示"等待继续"按钮，让他们知道需要等待房主
+        buttonsHTML += `<button id="modal-close-new" class="btn btn-primary">等待房主继续</button>`;
     }
-    buttonsHTML += `<button id="modal-close-new" class="btn ${isHost ? 'btn-secondary' : 'btn-primary'}">${isHost ? '退出' : '确定'}</button>`;
     buttonsHTML += `</div>`;
+    
+    // 如果不是房主，添加等待提示
+    if (!isHost) {
+        buttonsHTML += `<p style="text-align: center; color: var(--text-secondary); margin-top: 15px; font-size: 0.9rem;">点击按钮关闭窗口，等待房主开始新一局</p>`;
+    }
     
     modalBody.innerHTML += buttonsHTML;
     
-    // 绑定继续游戏按钮事件
+    // 绑定继续游戏按钮事件（仅房主可见）
     const continueBtn = document.getElementById('modal-continue');
     if (continueBtn) {
         continueBtn.addEventListener('click', handleContinueGame);
@@ -840,8 +892,22 @@ function handleContinueGame() {
 }
 
 function handleCloseModal() {
+    const isHost = gameState.playerIndex === 0;
+    
+    // 关闭模态框
     gameOverModal.classList.remove('active');
-    window.location.reload();
+    
+    if (isHost) {
+        // 房主点击退出，重新加载页面（离开房间）
+        window.location.reload();
+    } else {
+        // 其他玩家点击后，关闭模态框但保持在房间中，等待房主继续
+        // 显示等待提示信息
+        showToast('已关闭，等待房主继续游戏...');
+        
+        // 可以在这里添加一个等待界面提示（可选）
+        // 或者保持游戏界面显示，只是隐藏了模态框
+    }
 }
 
 // 处理继续游戏后的界面重置
