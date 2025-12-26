@@ -224,7 +224,6 @@ function updateOpponentDisplay(playerIndex, playerData) {
     const nameEl = opponentEl.querySelector('.opponent-name');
     const handCountEl = opponentEl.querySelector('.opponent-hand-count');
     const meldsEl = opponentEl.querySelector('.opponent-melds');
-    const discardedEl = opponentEl.querySelector('.opponent-discarded');
     
     nameEl.textContent = playerData.name;
     handCountEl.textContent = `🀄 × ${playerData.handCount}`;
@@ -234,14 +233,7 @@ function updateOpponentDisplay(playerIndex, playerData) {
         renderMelds(playerData.melds || [], meldsEl);
     }
     
-    // 更新弃牌显示
-    if (discardedEl) {
-        discardedEl.innerHTML = '';
-        (playerData.discarded || []).forEach(tile => {
-            const tileEl = createTileElement(tile, 'tiny', false);
-            discardedEl.appendChild(tileEl);
-        });
-    }
+    // 不再显示其他玩家的弃牌（只显示在弃牌池中）
     
     // 高亮当前回合玩家
     if (gameState.currentPlayerIndex === playerIndex) {

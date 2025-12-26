@@ -370,6 +370,7 @@ body {
 }
 
 .opponent-discarded {
+    display: none; /* 不在其他玩家下方显示弃牌，只显示在弃牌池中 */
     display: flex;
     gap: 5px;
     flex-wrap: wrap;
