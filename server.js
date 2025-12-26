@@ -491,6 +491,44 @@ class Room {
     const suits = new Set(numberTiles.map(t => t.slice(-1)));
     return suits.size === 1 && honorTiles.length > 0;
   }
+
+  // 重置游戏状态，保留玩家列表
+  resetGame() {
+    if (this.players.length !== 4) return false;
+    
+    // 重置游戏状态
+    this.deck = createDeck();
+    this.wall = [...this.deck];
+    this.lastDiscard = null;
+    this.currentPlayerIndex = 0;
+    
+    // 重置每个玩家的游戏数据，保留名字和分数
+    this.players.forEach(player => {
+      player.hand = [];
+      player.discarded = [];
+      player.melds = [];
+      player.isReady = false;
+    });
+    
+    // 发牌：每人13张
+    this.players.forEach(player => {
+      for (let i = 0; i < 13; i++) {
+        player.hand.push(this.wall.shift());
+      }
+      player.hand = sortTiles(player.hand);
+    });
+    
+    // 庄家（房主，索引0）起手额外摸一张
+    const dealer = this.players[this.currentPlayerIndex];
+    const dealerExtra = this.wall.shift();
+    if (dealerExtra) {
+      dealer.hand.push(dealerExtra);
+      dealer.hand = sortTiles(dealer.hand);
+    }
+    
+    this.gameStarted = true;
+    return true;
+  }
 }
 
 // Socket.IO 连接处理
@@ -612,7 +650,20 @@ io.on('connection', (socket) => {
       return;
     }
     
-    socket.emit('tile_drawn', { tile });
+    // 检查是否可以自摸
+    const canSelfWin = room.checkWin(socket.id, true);
+    
+    socket.emit('tile_drawn', { 
+      tile,
+      canSelfWin: canSelfWin !== null
+    });
+    
+    // 如果可以自摸，通知玩家
+    if (canSelfWin) {
+      socket.emit('can_self_win', {
+        canWin: true
+      });
+    }
     
     io.to(roomId).emit('game_state', {
       currentPlayerIndex: room.currentPlayerIndex,
@@ -781,6 +832,9 @@ io.on('connection', (socket) => {
     if (drawnTile) {
       const player = room.players.find(p => p.id === socket.id);
       
+      // 检查杠牌后是否可以自摸
+      const canSelfWin = room.checkWin(socket.id, true);
+      
       io.to(roomId).emit('kong_claimed', {
         playerId: socket.id,
         playerIndex: room.currentPlayerIndex,
@@ -790,8 +844,19 @@ io.on('connection', (socket) => {
       socket.emit('update_hand', { hand: player.hand });
       socket.emit('tile_drawn_after_kong', { 
         tile: drawnTile,
-        message: '杠牌后摸牌，请出牌'
+        message: '杠牌后摸牌，请出牌',
+        canSelfWin: canSelfWin !== null
       });
+      
+      // 如果可以自摸，通知玩家
+      if (canSelfWin) {
+        socket.emit('can_self_win', {
+          canWin: true
+        });
+      } else {
+        // 如果不能自摸，通知杠牌玩家可以直接出牌（手牌14张）
+        socket.emit('can_play', { message: '杠牌后已摸牌，请出牌' });
+      }
       
       io.to(roomId).emit('game_state', {
         currentPlayerIndex: room.currentPlayerIndex,
@@ -804,9 +869,6 @@ io.on('connection', (socket) => {
           melds: p.melds
         }))
       });
-      
-      // 通知杠牌玩家可以直接出牌（手牌14张）
-      socket.emit('can_play', { message: '杠牌后已摸牌，请出牌' });
     }
   });
 
@@ -860,6 +922,56 @@ io.on('connection', (socket) => {
         melds: p.melds
       }))
     });
+  });
+
+  // 继续游戏（新一局）
+  socket.on('continue_game', (data) => {
+    const { roomId } = data;
+    const room = rooms.get(roomId);
+    
+    if (!room) {
+      socket.emit('error', { message: '房间不存在' });
+      return;
+    }
+    
+    if (room.players[0].id !== socket.id) {
+      socket.emit('error', { message: '只有房主可以开始新一局' });
+      return;
+    }
+    
+    if (room.players.length !== 4) {
+      socket.emit('error', { message: '需要4名玩家才能继续' });
+      return;
+    }
+    
+    if (!room.resetGame()) {
+      socket.emit('error', { message: '无法重置游戏' });
+      return;
+    }
+    
+    // 向每个玩家发送各自的手牌（庄家可能已是14张）
+    room.players.forEach((player, index) => {
+      io.to(player.id).emit('game_started', {
+        hand: player.hand,
+        playerIndex: index,
+        currentPlayerIndex: room.currentPlayerIndex,
+        players: room.players.map(p => ({
+          id: p.id,
+          name: p.name,
+          handCount: p.hand.length,
+          discarded: p.discarded,
+          melds: p.melds,
+          score: p.score
+        })),
+        wallCount: room.wall.length
+      });
+    });
+    
+    // 首轮：通知庄家无需摸牌，直接出牌
+    const dealerId = room.players[room.currentPlayerIndex].id;
+    io.to(dealerId).emit('can_play', { message: '首轮开始，请出牌' });
+    
+    console.log(`继续游戏: 房间 ${roomId}`);
   });
 
   // 断线处理

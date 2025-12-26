@@ -359,11 +359,26 @@ socket.on('player_left', (data) => {
 });
 
 socket.on('game_started', (data) => {
+    // 清空弃牌池
+    const poolTiles = document.querySelector('.pool-tiles');
+    if (poolTiles) {
+        poolTiles.innerHTML = '';
+    }
+    
+    // 检查是否是继续游戏（模态框是否显示）
+    const isNewRound = gameOverModal.classList.contains('active');
+    
+    // 重置游戏状态
     gameState.hand = data.hand;
     gameState.playerIndex = data.playerIndex;
     gameState.currentPlayerIndex = data.currentPlayerIndex;
     gameState.players = data.players;
+    gameState.canClaim = null;
+    gameState.selectedTile = null;
+    gameState.canPlayWithoutDraw = false;
+    gameState.hasDrawnThisTurn = false;
     
+    // 更新显示
     document.getElementById('game-room-id').textContent = gameState.roomId;
     document.getElementById('player-name-display').textContent = gameState.playerName;
     document.getElementById('wall-count').textContent = data.wallCount;
@@ -371,8 +386,25 @@ socket.on('game_started', (data) => {
     renderHand();
     updateGameState(data);
     
+    // 确保游戏界面显示
     showScreen(gameScreen);
-    showToast('游戏开始！');
+    
+    // 如果是新一局，关闭模态框并清理按钮
+    if (isNewRound) {
+        gameOverModal.classList.remove('active');
+        // 清理动态添加的按钮
+        const continueBtn = document.getElementById('modal-continue');
+        const closeBtn = document.getElementById('modal-close-new');
+        if (continueBtn) continueBtn.remove();
+        if (closeBtn) closeBtn.remove();
+        // 恢复原来的关闭按钮显示
+        if (modalClose) {
+            modalClose.style.display = 'inline-block';
+        }
+        showToast('新一局开始！');
+    } else {
+        showToast('游戏开始！');
+    }
 });
 
 socket.on('tile_drawn', (data) => {
@@ -385,6 +417,30 @@ socket.on('tile_drawn', (data) => {
     // 本回合已摸牌，可出牌
     gameState.hasDrawnThisTurn = true;
     gameState.canPlayWithoutDraw = false;
+    
+    // 如果可以自摸，显示胡牌按钮
+    if (data.canSelfWin) {
+        actionButtons.style.display = 'flex';
+        document.getElementById('btn-chow').style.display = 'none';
+        document.getElementById('btn-pong').style.display = 'none';
+        document.getElementById('btn-kong').style.display = 'none';
+        document.getElementById('btn-win').style.display = 'inline-block';
+        document.getElementById('btn-pass').style.display = 'inline-block';
+        showToast('可以自摸胡牌！');
+    }
+});
+
+// 服务器通知可以自摸
+socket.on('can_self_win', (data) => {
+    if (data.canWin) {
+        actionButtons.style.display = 'flex';
+        document.getElementById('btn-chow').style.display = 'none';
+        document.getElementById('btn-pong').style.display = 'none';
+        document.getElementById('btn-kong').style.display = 'none';
+        document.getElementById('btn-win').style.display = 'inline-block';
+        document.getElementById('btn-pass').style.display = 'inline-block';
+        showToast('可以自摸胡牌！');
+    }
 });
 
 socket.on('game_state', (data) => {
@@ -507,6 +563,17 @@ socket.on('tile_drawn_after_kong', (data) => {
     // 杠后自动摸牌，允许直接出牌
     gameState.hasDrawnThisTurn = true;
     gameState.canPlayWithoutDraw = true;
+    
+    // 如果可以自摸，显示胡牌按钮
+    if (data.canSelfWin) {
+        actionButtons.style.display = 'flex';
+        document.getElementById('btn-chow').style.display = 'none';
+        document.getElementById('btn-pong').style.display = 'none';
+        document.getElementById('btn-kong').style.display = 'none';
+        document.getElementById('btn-win').style.display = 'inline-block';
+        document.getElementById('btn-pass').style.display = 'inline-block';
+        showToast('可以自摸胡牌！');
+    }
 });
 
 // 服务器通知可以出牌
@@ -528,6 +595,12 @@ socket.on('update_hand', (data) => {
 });
 
 socket.on('game_over', (data) => {
+    // 先移除之前可能绑定的事件监听器
+    const oldContinueBtn = document.getElementById('modal-continue');
+    const oldCloseBtn = document.getElementById('modal-close-new');
+    if (oldContinueBtn) oldContinueBtn.remove();
+    if (oldCloseBtn) oldCloseBtn.remove();
+    
     if (data.type === 'win') {
         modalTitle.textContent = '🎉 ' + data.winnerName + ' 胡牌！';
         
@@ -557,6 +630,36 @@ socket.on('game_over', (data) => {
     } else if (data.type === 'draw') {
         modalTitle.textContent = '流局';
         modalBody.innerHTML = `<p>${data.message}</p>`;
+    }
+    
+    // 检查是否是房主（第一个玩家），如果是则显示"继续游戏"按钮
+    const isHost = gameState.playerIndex === 0;
+    
+    // 添加按钮容器
+    let buttonsHTML = `<div style="display: flex; gap: 10px; justify-content: center; margin-top: 20px;">`;
+    if (isHost) {
+        buttonsHTML += `<button id="modal-continue" class="btn btn-primary">继续游戏</button>`;
+    }
+    buttonsHTML += `<button id="modal-close-new" class="btn ${isHost ? 'btn-secondary' : 'btn-primary'}">${isHost ? '退出' : '确定'}</button>`;
+    buttonsHTML += `</div>`;
+    
+    modalBody.innerHTML += buttonsHTML;
+    
+    // 绑定继续游戏按钮事件
+    const continueBtn = document.getElementById('modal-continue');
+    if (continueBtn) {
+        continueBtn.addEventListener('click', handleContinueGame);
+    }
+    
+    // 绑定关闭按钮事件
+    const closeBtn = document.getElementById('modal-close-new');
+    if (closeBtn) {
+        closeBtn.addEventListener('click', handleCloseModal);
+    }
+    
+    // 隐藏原来的关闭按钮（如果存在）
+    if (modalClose) {
+        modalClose.style.display = 'none';
     }
     
     gameOverModal.classList.add('active');
@@ -636,9 +739,14 @@ document.getElementById('btn-kong').addEventListener('click', () => {
 });
 
 document.getElementById('btn-win').addEventListener('click', () => {
+    // 判断是自摸还是点炮
+    // 如果是在摸牌后（hasDrawnThisTurn为true）或者手牌14张，则是自摸
+    // 否则是点炮
+    const isSelfDraw = gameState.hasDrawnThisTurn || gameState.hand.length === 14;
+    
     socket.emit('declare_win', {
         roomId: gameState.roomId,
-        isSelfDraw: gameState.hand.length === 14
+        isSelfDraw: isSelfDraw
     });
     actionButtons.style.display = 'none';
 });
@@ -648,9 +756,55 @@ document.getElementById('btn-pass').addEventListener('click', () => {
     actionButtons.style.display = 'none';
 });
 
+// 原有的关闭按钮，用于非房主玩家
 modalClose.addEventListener('click', () => {
     gameOverModal.classList.remove('active');
     window.location.reload(); // 重新加载页面
+});
+
+// 防止重复绑定事件的处理函数
+function handleContinueGame() {
+    socket.emit('continue_game', { roomId: gameState.roomId });
+    gameOverModal.classList.remove('active');
+}
+
+function handleCloseModal() {
+    gameOverModal.classList.remove('active');
+    window.location.reload();
+}
+
+// 处理继续游戏后的界面重置
+socket.on('game_started', (data) => {
+    // 清空弃牌池
+    const poolTiles = document.querySelector('.pool-tiles');
+    if (poolTiles) {
+        poolTiles.innerHTML = '';
+    }
+    
+    // 重置游戏状态
+    gameState.hand = data.hand;
+    gameState.playerIndex = data.playerIndex;
+    gameState.currentPlayerIndex = data.currentPlayerIndex;
+    gameState.players = data.players;
+    gameState.canClaim = null;
+    gameState.selectedTile = null;
+    gameState.canPlayWithoutDraw = false;
+    gameState.hasDrawnThisTurn = false;
+    
+    // 更新显示
+    document.getElementById('game-room-id').textContent = gameState.roomId;
+    document.getElementById('player-name-display').textContent = gameState.playerName;
+    document.getElementById('wall-count').textContent = data.wallCount;
+    
+    renderHand();
+    updateGameState(data);
+    
+    // 确保游戏界面显示
+    showScreen(gameScreen);
+    showToast('新一局开始！');
+    
+    // 隐藏模态框（如果还在显示）
+    gameOverModal.classList.remove('active');
 });
 
 // 回车键快捷操作
