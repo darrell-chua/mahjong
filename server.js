@@ -1000,6 +1000,46 @@ io.on('connection', (socket) => {
       return;
     }
     
+    // UNO游戏
+    if (room.gameType === 'uno') {
+      if (!room.startGame()) {
+        socket.emit('error', { message: '需要2-5名玩家才能开始UNO游戏' });
+        return;
+      }
+      
+      // 向每个玩家发送各自的手牌
+      room.players.forEach((player, index) => {
+        io.to(player.id).emit('uno_game_started', {
+          hand: player.hand,
+          playerIndex: index,
+          currentPlayerIndex: room.currentPlayerIndex,
+          players: room.players.map(p => ({
+            id: p.id,
+            name: p.name,
+            handCount: p.hand.length,
+            score: p.score
+          })),
+          topCard: unoCardToString(room.discardPile[room.discardPile.length - 1]),
+          currentColor: room.currentColor,
+          deckCount: room.deck.length,
+          direction: room.direction,
+          pendingDraw: room.pendingDraw
+        });
+      });
+      
+      // 通知当前玩家可以出牌
+      const currentPlayerId = room.players[room.currentPlayerIndex].id;
+      const playableCards = room.getPlayableCards(currentPlayerId);
+      io.to(currentPlayerId).emit('uno_can_play', {
+        playableCards: playableCards,
+        mustDraw: room.pendingDraw > 0
+      });
+      
+      console.log(`UNO游戏开始: 房间 ${roomId}`);
+      return;
+    }
+    
+    // 麻将游戏
     if (!room.startGame()) {
       socket.emit('error', { message: '需要4名玩家才能开始' });
       return;

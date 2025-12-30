@@ -352,15 +352,25 @@ socket.on('error', (data) => {
 
 socket.on('room_created', (data) => {
     gameState.roomId = data.roomId;
+    gameState.gameType = data.gameType || 'mahjong';
     currentRoomId.textContent = data.roomId;
+    
+    // 根据游戏类型设置玩家槽位数量
+    const maxPlayers = data.gameType === 'uno' ? 5 : 4;
+    setupPlayerSlots(maxPlayers);
     
     // 更新玩家列表
     data.players.forEach((player, index) => {
         const slot = document.getElementById(`player-slot-${index}`);
-        slot.classList.add('filled');
-        slot.querySelector('.player-name').textContent = player.name;
-        slot.querySelector('.player-avatar').textContent = '👤';
+        if (slot) {
+            slot.classList.add('filled');
+            slot.querySelector('.player-name').textContent = player.name;
+            slot.querySelector('.player-avatar').textContent = '👤';
+        }
     });
+    
+    // 根据游戏类型更新开始按钮
+    updateStartGameButton(data.gameType, data.players.length);
     
     // 清空房间号输入框，避免混淆
     roomIdInput.value = '';
@@ -370,8 +380,17 @@ socket.on('room_created', (data) => {
 });
 
 socket.on('player_joined', (data) => {
+    // 更新gameType（如果服务器返回了）
+    if (data.gameType) {
+        gameState.gameType = data.gameType;
+    }
+    
+    // 根据游戏类型设置玩家槽位数量
+    const maxPlayers = gameState.gameType === 'uno' ? 5 : 4;
+    setupPlayerSlots(maxPlayers);
+    
     // 清空所有槽位
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < maxPlayers; i++) {
         const slot = document.getElementById(`player-slot-${i}`);
         if (slot) {
             slot.classList.remove('filled');
@@ -391,23 +410,7 @@ socket.on('player_joined', (data) => {
     });
     
     // 根据游戏类型更新开始按钮
-    if (gameState.gameType === 'uno') {
-        if (data.players.length >= 2 && data.players.length <= 5) {
-            startGameBtn.disabled = false;
-            startGameBtn.textContent = `开始游戏 (${data.players.length}/2-5)`;
-        } else {
-            startGameBtn.disabled = true;
-            startGameBtn.textContent = `开始游戏 (${data.players.length}/2-5)`;
-        }
-    } else {
-        if (data.players.length === 4) {
-            startGameBtn.disabled = false;
-            startGameBtn.textContent = '开始游戏';
-        } else {
-            startGameBtn.disabled = true;
-            startGameBtn.textContent = `开始游戏 (${data.players.length}/4)`;
-        }
-    }
+    updateStartGameButton(gameState.gameType, data.players.length);
     
     showToast(`玩家加入，当前 ${data.players.length} 人`);
 });
@@ -429,8 +432,8 @@ socket.on('player_left', (data) => {
         gameState.canSelfKong = false;
         
         // 清空手牌显示
-        playerHand.innerHTML = '';
-        playerMelds.innerHTML = '';
+        if (playerHand) playerHand.innerHTML = '';
+        if (playerMelds) playerMelds.innerHTML = '';
         
         // 清空弃牌池
         const poolTiles = document.querySelector('.pool-tiles');
@@ -439,13 +442,17 @@ socket.on('player_left', (data) => {
         }
         
         // 隐藏操作按钮
-        actionButtons.style.display = 'none';
-        drawButtonContainer.style.display = 'none';
+        if (actionButtons) actionButtons.style.display = 'none';
+        if (drawButtonContainer) drawButtonContainer.style.display = 'none';
         
         // 关闭游戏结束模态框（如果打开）
-        if (gameOverModal.classList.contains('active')) {
+        if (gameOverModal && gameOverModal.classList.contains('active')) {
             gameOverModal.classList.remove('active');
         }
+        
+        // 重新设置玩家槽位
+        const maxPlayers = gameState.gameType === 'uno' ? 5 : 4;
+        setupPlayerSlots(maxPlayers);
     }
     
     // 更新游戏状态中的玩家列表
@@ -457,6 +464,24 @@ socket.on('player_left', (data) => {
         melds: [],
         score: p.score
     }));
+    
+    // 更新等待界面的玩家列表
+    if (waitingScreen.classList.contains('active')) {
+        const maxPlayers = gameState.gameType === 'uno' ? 5 : 4;
+        setupPlayerSlots(maxPlayers);
+        
+        data.players.forEach((player, index) => {
+            const slot = document.getElementById(`player-slot-${index}`);
+            if (slot) {
+                slot.classList.add('filled');
+                const nameEl = slot.querySelector('.player-name');
+                if (nameEl) nameEl.textContent = player.name;
+            }
+        });
+        
+        // 更新开始游戏按钮
+        updateStartGameButton(gameState.gameType, data.players.length);
+    }
     
     // 如果游戏结束模态框正在显示，更新按钮状态
     if (gameOverModal.classList.contains('active')) {
@@ -1621,6 +1646,54 @@ gameSelectBtns.forEach(btn => {
         showScreen(loginScreen);
     });
 });
+
+// 设置玩家槽位（根据游戏类型）
+function setupPlayerSlots(maxPlayers) {
+    const playersList = document.querySelector('.players-list');
+    if (!playersList) return;
+    
+    // 清空现有槽位
+    playersList.innerHTML = '';
+    
+    // 创建新的槽位
+    for (let i = 0; i < maxPlayers; i++) {
+        const slot = document.createElement('div');
+        slot.className = 'player-slot';
+        slot.id = `player-slot-${i}`;
+        slot.innerHTML = `
+            <div class="player-avatar">👤</div>
+            <div class="player-name">等待中...</div>
+        `;
+        playersList.appendChild(slot);
+    }
+}
+
+// 更新开始游戏按钮状态
+function updateStartGameButton(gameType, playerCount) {
+    if (!startGameBtn) return;
+    
+    if (gameType === 'uno') {
+        if (playerCount >= 2 && playerCount <= 5) {
+            startGameBtn.disabled = false;
+            startGameBtn.textContent = `开始游戏 (${playerCount}/2-5)`;
+        } else if (playerCount < 2) {
+            startGameBtn.disabled = true;
+            startGameBtn.textContent = `开始游戏 (需要至少2人，当前${playerCount}人)`;
+        } else {
+            startGameBtn.disabled = true;
+            startGameBtn.textContent = `开始游戏 (人数已满，当前${playerCount}人)`;
+        }
+    } else {
+        // 麻将
+        if (playerCount === 4) {
+            startGameBtn.disabled = false;
+            startGameBtn.textContent = '开始游戏';
+        } else {
+            startGameBtn.disabled = true;
+            startGameBtn.textContent = `开始游戏 (${playerCount}/4)`;
+        }
+    }
+}
 
 // 返回选择界面
 if (backToSelectionBtn) {
