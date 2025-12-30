@@ -1151,4 +1151,3 @@ roomIdInput.addEventListener('keypress', (e) => {
         joinRoomBtn.click();
     }
 });
-});
