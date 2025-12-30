@@ -373,28 +373,43 @@ socket.on('player_joined', (data) => {
     // 清空所有槽位
     for (let i = 0; i < 4; i++) {
         const slot = document.getElementById(`player-slot-${i}`);
-        slot.classList.remove('filled');
-        slot.querySelector('.player-name').textContent = '等待中...';
+        if (slot) {
+            slot.classList.remove('filled');
+            const nameEl = slot.querySelector('.player-name');
+            if (nameEl) nameEl.textContent = '等待中...';
+        }
     }
     
     // 更新玩家列表
     data.players.forEach((player, index) => {
         const slot = document.getElementById(`player-slot-${index}`);
-        slot.classList.add('filled');
-        slot.querySelector('.player-name').textContent = player.name;
-        slot.querySelector('.player-avatar').textContent = '👤';
+        if (slot) {
+            slot.classList.add('filled');
+            const nameEl = slot.querySelector('.player-name');
+            if (nameEl) nameEl.textContent = player.name;
+        }
     });
     
-    // 启用开始按钮
-    if (data.players.length === 4) {
-        startGameBtn.disabled = false;
-        startGameBtn.textContent = '开始游戏';
+    // 根据游戏类型更新开始按钮
+    if (gameState.gameType === 'uno') {
+        if (data.players.length >= 2 && data.players.length <= 5) {
+            startGameBtn.disabled = false;
+            startGameBtn.textContent = `开始游戏 (${data.players.length}/2-5)`;
+        } else {
+            startGameBtn.disabled = true;
+            startGameBtn.textContent = `开始游戏 (${data.players.length}/2-5)`;
+        }
     } else {
-        startGameBtn.disabled = true;
-        startGameBtn.textContent = `开始游戏 (${data.players.length}/4)`;
+        if (data.players.length === 4) {
+            startGameBtn.disabled = false;
+            startGameBtn.textContent = '开始游戏';
+        } else {
+            startGameBtn.disabled = true;
+            startGameBtn.textContent = `开始游戏 (${data.players.length}/4)`;
+        }
     }
     
-    showToast(`玩家加入，当前 ${data.players.length}/4 人`);
+    showToast(`玩家加入，当前 ${data.players.length} 人`);
 });
 
 socket.on('player_left', (data) => {
@@ -985,48 +1000,357 @@ startGameBtn.addEventListener('click', () => {
     socket.emit('start_game', { roomId: gameState.roomId });
 });
 
+// UNO卡牌显示映射
+const UNO_CARD_DISPLAY = {
+    'red': '🔴',
+    'yellow': '🟡',
+    'green': '🟢',
+    'blue': '🔵'
+};
+
+// UNO卡牌显示函数
+function getUnoCardDisplay(cardStr) {
+    const card = parseUnoCard(cardStr);
+    if (!card) return cardStr;
+    
+    const colorEmoji = UNO_CARD_DISPLAY[card.color] || '';
+    
+    if (card.type === 'number') {
+        return `${colorEmoji} ${card.value}`;
+    } else if (card.type === 'action') {
+        const actionText = {
+            'skip': '跳过',
+            'reverse': '反转',
+            'draw2': '+2'
+        };
+        return `${colorEmoji} ${actionText[card.action] || card.action}`;
+    } else if (card.type === 'wild') {
+        if (card.action === 'wild_draw4') {
+            return '🌈 +4';
+        } else {
+            return '🌈 变色';
+        }
+    }
+    return cardStr;
+}
+
+// 解析UNO卡牌字符串
+function parseUnoCard(cardStr) {
+    const parts = cardStr.split('_');
+    if (parts.length === 1) {
+        // 万能牌
+        return { type: 'wild', color: null, action: cardStr };
+    } else if (parts.length === 2) {
+        const [color, value] = parts;
+        if (['skip', 'reverse', 'draw2'].includes(value)) {
+            return { type: 'action', color, action: value };
+        } else {
+            return { type: 'number', color, value: parseInt(value) };
+        }
+    }
+    return null;
+}
+
+// 创建UNO卡牌元素
+function createUnoCardElement(cardStr, size = 'normal', clickable = false, isPlayable = false) {
+    const cardEl = document.createElement('div');
+    const card = parseUnoCard(cardStr);
+    
+    cardEl.className = `uno-card ${size === 'small' ? 'small' : ''} ${size === 'tiny' ? 'tiny' : ''}`;
+    cardEl.setAttribute('data-card', cardStr);
+    
+    if (card) {
+        if (card.color) {
+            cardEl.classList.add(`uno-${card.color}`);
+        } else {
+            cardEl.classList.add('uno-wild');
+        }
+        
+        if (isPlayable) {
+            cardEl.classList.add('playable');
+        }
+    }
+    
+    cardEl.textContent = getUnoCardDisplay(cardStr);
+    
+    if (clickable) {
+        cardEl.style.cursor = 'pointer';
+        cardEl.addEventListener('click', () => onUnoCardClick(cardStr, cardEl));
+    }
+    
+    return cardEl;
+}
+
+// UNO卡牌点击处理
+function onUnoCardClick(cardStr, cardEl) {
+    if (gameState.gameType !== 'uno') return;
+    
+    // 检查是否轮到我
+    if (gameState.currentPlayerIndex !== gameState.playerIndex) {
+        showToast('还没轮到你！');
+        return;
+    }
+    
+    const card = parseUnoCard(cardStr);
+    if (!card) return;
+    
+    // 如果是万能牌，需要选择颜色
+    if (card.type === 'wild') {
+        showColorSelection(cardStr);
+        return;
+    }
+    
+    // 出牌
+    socket.emit('play_tile', {
+        roomId: gameState.roomId,
+        tile: cardStr
+    });
+    
+    // 从手牌中移除
+    const index = gameState.hand.indexOf(cardStr);
+    if (index !== -1) {
+        gameState.hand.splice(index, 1);
+        renderUnoHand();
+    }
+}
+
+// 显示颜色选择界面（万能牌）
+function showColorSelection(cardStr) {
+    const colorModal = document.getElementById('uno-color-modal');
+    if (!colorModal) {
+        // 创建颜色选择模态框
+        const modal = document.createElement('div');
+        modal.id = 'uno-color-modal';
+        modal.className = 'uno-color-modal';
+        modal.innerHTML = `
+            <div class="uno-color-modal-content">
+                <h3>选择颜色</h3>
+                <div class="uno-color-buttons">
+                    <button class="uno-color-btn uno-red" data-color="red">🔴 红色</button>
+                    <button class="uno-color-btn uno-yellow" data-color="yellow">🟡 黄色</button>
+                    <button class="uno-color-btn uno-green" data-color="green">🟢 绿色</button>
+                    <button class="uno-color-btn uno-blue" data-color="blue">🔵 蓝色</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        
+        // 绑定颜色选择事件
+        modal.querySelectorAll('.uno-color-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const color = btn.getAttribute('data-color');
+                socket.emit('play_tile', {
+                    roomId: gameState.roomId,
+                    tile: cardStr,
+                    wildColor: color
+                });
+                
+                // 从手牌中移除
+                const index = gameState.hand.indexOf(cardStr);
+                if (index !== -1) {
+                    gameState.hand.splice(index, 1);
+                    renderUnoHand();
+                }
+                
+                modal.remove();
+            });
+        });
+    }
+    
+    const modal = document.getElementById('uno-color-modal');
+    modal.classList.add('active');
+}
+
+// 渲染UNO手牌
+function renderUnoHand() {
+    playerHand.innerHTML = '';
+    
+    // 排序手牌：按颜色和类型
+    const sortedHand = [...gameState.hand].sort((a, b) => {
+        const cardA = parseUnoCard(a);
+        const cardB = parseUnoCard(b);
+        
+        if (!cardA || !cardB) return 0;
+        
+        // 万能牌放最后
+        if (cardA.type === 'wild' && cardB.type !== 'wild') return 1;
+        if (cardA.type !== 'wild' && cardB.type === 'wild') return -1;
+        
+        // 同类型按颜色排序
+        const colorOrder = { 'red': 1, 'yellow': 2, 'green': 3, 'blue': 4 };
+        if (cardA.color && cardB.color) {
+            if (colorOrder[cardA.color] !== colorOrder[cardB.color]) {
+                return colorOrder[cardA.color] - colorOrder[cardB.color];
+            }
+        }
+        
+        // 同颜色按值排序
+        if (cardA.value !== undefined && cardB.value !== undefined) {
+            return cardA.value - cardB.value;
+        }
+        
+        return 0;
+    });
+    
+    sortedHand.forEach(cardStr => {
+        const cardEl = createUnoCardElement(cardStr, 'normal', true, false);
+        playerHand.appendChild(cardEl);
+    });
+}
+
+// 更新可出牌状态
+function updatePlayableCards(playableCards) {
+    const cards = playerHand.querySelectorAll('.uno-card');
+    cards.forEach(cardEl => {
+        const cardStr = cardEl.getAttribute('data-card');
+        if (playableCards.includes(cardStr)) {
+            cardEl.classList.add('playable');
+        } else {
+            cardEl.classList.remove('playable');
+        }
+    });
+}
+
 // UNO游戏相关事件处理
 socket.on('uno_game_started', (data) => {
     gameState.hand = data.hand;
     gameState.playerIndex = data.playerIndex;
     gameState.currentPlayerIndex = data.currentPlayerIndex;
     gameState.players = data.players;
+    gameState.gameType = 'uno';
     
     // 更新显示
     document.getElementById('game-room-id').textContent = gameState.roomId;
     document.getElementById('player-name-display').textContent = gameState.playerName;
+    document.getElementById('wall-count').textContent = data.deckCount;
     
-    // 显示UNO游戏界面（需要创建）
+    // 更新当前回合
+    if (data.players[data.currentPlayerIndex]) {
+        document.getElementById('current-turn-name').textContent = data.players[data.currentPlayerIndex].name;
+    }
+    
+    // 渲染UNO手牌
+    renderUnoHand();
+    
+    // 显示牌堆顶的牌
+    const discardPool = document.querySelector('.pool-tiles');
+    if (discardPool) {
+        discardPool.innerHTML = '';
+        const topCardEl = createUnoCardElement(data.topCard, 'normal', false);
+        topCardEl.style.transform = 'scale(1.2)';
+        discardPool.appendChild(topCardEl);
+    }
+    
+    // 更新对手显示
+    updateUnoOpponents(data.players, data.playerIndex);
+    
+    // 显示游戏界面
     showScreen(gameScreen);
     showToast('UNO游戏开始！');
     
-    // TODO: 渲染UNO手牌和游戏界面
+    // 如果是当前玩家，显示操作提示
+    if (data.currentPlayerIndex === data.playerIndex) {
+        drawButtonContainer.style.display = 'block';
+        // 等待服务器发送uno_can_play事件来更新可出牌状态
+    } else {
+        drawButtonContainer.style.display = 'none';
+    }
 });
 
 socket.on('uno_can_play', (data) => {
-    // TODO: 显示可出的牌和抽牌按钮
-    if (data.mustDraw) {
-        showToast('必须抽牌！');
-    } else {
-        showToast('可以出牌或抽牌');
+    if (gameState.currentPlayerIndex === gameState.playerIndex) {
+        updatePlayableCards(data.playableCards);
+        
+        if (data.mustDraw) {
+            showToast('必须抽牌！');
+            drawButtonContainer.style.display = 'block';
+            // 禁用所有卡牌点击
+            playerHand.querySelectorAll('.uno-card').forEach(card => {
+                card.style.pointerEvents = 'none';
+            });
+        } else {
+            drawButtonContainer.style.display = 'block';
+            // 启用可出牌的点击
+            playerHand.querySelectorAll('.uno-card').forEach(card => {
+                card.style.pointerEvents = 'auto';
+            });
+        }
     }
 });
 
 socket.on('uno_card_played', (data) => {
     showToast(`${gameState.players[data.playerIndex]?.name} 出牌`);
-    // TODO: 更新牌堆显示
+    
+    // 更新牌堆显示
+    const discardPool = document.querySelector('.pool-tiles');
+    if (discardPool) {
+        discardPool.innerHTML = '';
+        const topCardEl = createUnoCardElement(data.topCard, 'normal', false);
+        topCardEl.style.transform = 'scale(1.2)';
+        discardPool.appendChild(topCardEl);
+    }
+    
+    // 显示当前颜色
+    if (data.currentColor) {
+        const colorEmoji = UNO_CARD_DISPLAY[data.currentColor] || '';
+        showGameNotification(`当前颜色: ${colorEmoji} ${data.currentColor}`);
+    }
 });
 
 socket.on('uno_card_drawn', (data) => {
     gameState.hand = data.hand;
+    renderUnoHand();
     showToast('抽到 ' + data.cards.length + ' 张牌');
-    // TODO: 更新手牌显示
+    
+    // 等待服务器通知是否可以出牌
+    // playableCards会在uno_can_play事件中更新
+    // 如果抽牌后没有待抽取的牌，服务器会发送uno_can_play事件
+});
+
+socket.on('uno_hand_updated', (data) => {
+    gameState.hand = data.hand;
+    renderUnoHand();
 });
 
 socket.on('uno_game_state', (data) => {
     gameState.currentPlayerIndex = data.currentPlayerIndex;
     gameState.players = data.players;
-    // TODO: 更新游戏状态显示
+    
+    // 更新信息栏
+    document.getElementById('wall-count').textContent = data.deckCount;
+    if (data.players[data.currentPlayerIndex]) {
+        document.getElementById('current-turn-name').textContent = data.players[data.currentPlayerIndex].name;
+    }
+    
+    // 更新对手显示
+    updateUnoOpponents(data.players, gameState.playerIndex);
+    
+    // 更新牌堆
+    const discardPool = document.querySelector('.pool-tiles');
+    if (discardPool && data.topCard) {
+        discardPool.innerHTML = '';
+        const topCardEl = createUnoCardElement(data.topCard, 'normal', false);
+        topCardEl.style.transform = 'scale(1.2)';
+        discardPool.appendChild(topCardEl);
+    }
+    
+    // 显示当前颜色
+    if (data.currentColor) {
+        const colorEmoji = UNO_CARD_DISPLAY[data.currentColor] || '';
+        // 可以在信息栏显示当前颜色
+    }
+    
+    // 如果是当前玩家，显示操作提示
+    if (data.currentPlayerIndex === gameState.playerIndex) {
+        if (data.pendingDraw > 0) {
+            showToast('必须抽牌！');
+            drawButtonContainer.style.display = 'block';
+        } else {
+            drawButtonContainer.style.display = 'block';
+        }
+    } else {
+        drawButtonContainer.style.display = 'none';
+    }
 });
 
 socket.on('uno_game_over', (data) => {
@@ -1036,6 +1360,30 @@ socket.on('uno_game_over', (data) => {
         gameOverModal.classList.add('active');
     }
 });
+
+// 更新UNO对手显示
+function updateUnoOpponents(players, myIndex) {
+    players.forEach((player, index) => {
+        if (index === myIndex) return;
+        
+        const opponentIndex = (index - myIndex + players.length) % players.length;
+        const opponentEl = document.getElementById(`opponent-${opponentIndex}`);
+        if (!opponentEl) return;
+        
+        const nameEl = opponentEl.querySelector('.opponent-name');
+        const handCountEl = opponentEl.querySelector('.opponent-hand-count');
+        
+        if (nameEl) nameEl.textContent = player.name;
+        if (handCountEl) handCountEl.textContent = `🃏 × ${player.handCount}`;
+        
+        // 高亮当前回合玩家
+        if (gameState.currentPlayerIndex === index) {
+            opponentEl.classList.add('current-turn');
+        } else {
+            opponentEl.classList.remove('current-turn');
+        }
+    });
+}
 
 leaveRoomBtn.addEventListener('click', () => {
     if (gameState.roomId) {

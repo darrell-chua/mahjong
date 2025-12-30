@@ -978,7 +978,8 @@ io.on('connection', (socket) => {
     socket.join(roomId);
     
     io.to(roomId).emit('player_joined', {
-      players: room.players.map(p => ({ id: p.id, name: p.name, score: p.score }))
+      players: room.players.map(p => ({ id: p.id, name: p.name, score: p.score })),
+      gameType: room.gameType || 'mahjong'
     });
     
     console.log(`玩家加入: ${playerName} -> 房间 ${roomId}`);
@@ -1074,13 +1075,22 @@ io.on('connection', (socket) => {
         pendingDraw: room.pendingDraw
       });
       
-      // 通知当前玩家可以出牌
-      const currentPlayerId = room.players[room.currentPlayerIndex].id;
-      const playableCards = room.getPlayableCards(currentPlayerId);
-      io.to(currentPlayerId).emit('uno_can_play', {
-        playableCards: playableCards,
-        mustDraw: room.pendingDraw > 0
-      });
+      // 通知当前玩家可以出牌（如果抽牌后没有待抽取的牌）
+      if (room.pendingDraw === 0) {
+        const currentPlayerId = room.players[room.currentPlayerIndex].id;
+        const playableCards = room.getPlayableCards(currentPlayerId);
+        io.to(currentPlayerId).emit('uno_can_play', {
+          playableCards: playableCards,
+          mustDraw: false
+        });
+      } else {
+        // 如果还有待抽取的牌，通知下一个玩家
+        const nextPlayerId = room.players[room.currentPlayerIndex].id;
+        io.to(nextPlayerId).emit('uno_can_play', {
+          playableCards: [],
+          mustDraw: room.pendingDraw > 0
+        });
+      }
       
       return;
     }
