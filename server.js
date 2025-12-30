@@ -66,7 +66,18 @@ function unoCardToString(card) {
   } else if (card.type === 'action') {
     return `${card.color}_${card.action}`;
   } else if (card.type === 'wild') {
-    return card.action;
+    // 如果万能牌有颜色（已选择颜色），转换为带颜色的格式用于显示
+    if (card.color) {
+      // 对于已选择颜色的万能牌，使用特殊格式：color_wild 或 color_wild_draw4
+      if (card.action === 'wild_draw4') {
+        return `${card.color}_wild_draw4`;
+      } else {
+        return `${card.color}_wild`;
+      }
+    } else {
+      // 未选择颜色的万能牌，使用原始格式
+      return card.action;
+    }
   }
 }
 
@@ -74,16 +85,24 @@ function unoCardToString(card) {
 function stringToUnoCard(str) {
   const parts = str.split('_');
   if (parts.length === 1) {
-    // 万能牌
+    // 万能牌（wild 或 wild_draw4）
     return { type: 'wild', color: null, action: str };
   } else if (parts.length === 2) {
     const [color, value] = parts;
+    // 检查是否是已选择颜色的万能牌
+    if (value === 'wild' || value === 'wild_draw4') {
+      return { type: 'wild', color: color, action: value };
+    }
     if (UNO_ACTIONS.includes(value)) {
       return { type: 'action', color, action: value };
     } else {
-      return { type: 'number', color, value: parseInt(value) };
+      const numValue = parseInt(value);
+      if (!isNaN(numValue)) {
+        return { type: 'number', color, value: numValue };
+      }
     }
   }
+  return null;
 }
 
 // 麻将牌定义（马来西亚麻将）
@@ -827,15 +846,23 @@ class UnoRoom {
     const index = player.hand.indexOf(cardStr);
     player.hand.splice(index, 1);
     
-    // 添加到弃牌堆
-    this.discardPile.push(card);
+    // 处理特殊牌并创建要添加到弃牌堆的牌
+    let cardToDiscard = card;
     
-    // 处理特殊牌
     if (card.type === 'wild') {
-      this.currentColor = wildColor || UNO_COLORS[0];
+      // 万能牌：根据选择的颜色转换为对应的牌显示
+      const selectedColor = wildColor || UNO_COLORS[0];
+      this.currentColor = selectedColor;
+      
+      // 将万能牌转换为带颜色的牌（用于显示）
       if (card.action === 'wild_draw4') {
+        // +4万能牌转换为带颜色的+4牌（虽然实际上+4万能牌没有颜色，但为了显示）
+        cardToDiscard = { type: 'wild', color: selectedColor, action: 'wild_draw4' };
         this.pendingDraw += 4;
         this.nextTurn();
+      } else {
+        // 普通万能牌转换为带颜色的牌（用于显示）
+        cardToDiscard = { type: 'wild', color: selectedColor, action: 'wild' };
       }
     } else if (card.type === 'action') {
       this.currentColor = card.color;
@@ -854,6 +881,9 @@ class UnoRoom {
     } else {
       this.currentColor = card.color;
     }
+    
+    // 添加到弃牌堆（使用转换后的牌）
+    this.discardPile.push(cardToDiscard);
     
     // 检查是否获胜
     if (player.hand.length === 0) {

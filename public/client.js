@@ -1038,7 +1038,7 @@ function getUnoCardDisplay(cardStr) {
     const card = parseUnoCard(cardStr);
     if (!card) return cardStr;
     
-    const colorEmoji = UNO_CARD_DISPLAY[card.color] || '';
+    const colorEmoji = card.color ? (UNO_CARD_DISPLAY[card.color] || '') : '';
     
     if (card.type === 'number') {
         return `${colorEmoji} ${card.value}`;
@@ -1050,10 +1050,20 @@ function getUnoCardDisplay(cardStr) {
         };
         return `${colorEmoji} ${actionText[card.action] || card.action}`;
     } else if (card.type === 'wild') {
-        if (card.action === 'wild_draw4') {
-            return '🌈 +4';
+        // 如果万能牌有颜色（已选择颜色），显示为带颜色的牌
+        if (card.color) {
+            if (card.action === 'wild_draw4') {
+                return `${colorEmoji} +4`;
+            } else {
+                return `${colorEmoji} 变色`;
+            }
         } else {
-            return '🌈 变色';
+            // 未选择颜色的万能牌
+            if (card.action === 'wild_draw4') {
+                return '🌈 +4';
+            } else {
+                return '🌈 变色';
+            }
         }
     }
     return cardStr;
@@ -1063,14 +1073,34 @@ function getUnoCardDisplay(cardStr) {
 function parseUnoCard(cardStr) {
     const parts = cardStr.split('_');
     if (parts.length === 1) {
-        // 万能牌
+        // 万能牌（wild 或 wild_draw4）
+        if (cardStr === 'wild' || cardStr === 'wild_draw4') {
+            return { type: 'wild', color: null, action: cardStr };
+        }
         return { type: 'wild', color: null, action: cardStr };
     } else if (parts.length === 2) {
         const [color, value] = parts;
+        // 检查是否是已选择颜色的万能牌（格式：color_wild 或 color_wild_draw4）
+        if (value === 'wild' || value === 'wild_draw4') {
+            return { type: 'wild', color: color, action: value };
+        }
+        // 检查是否是功能牌
         if (['skip', 'reverse', 'draw2'].includes(value)) {
             return { type: 'action', color, action: value };
         } else {
-            return { type: 'number', color, value: parseInt(value) };
+            // 尝试解析为数字
+            const numValue = parseInt(value);
+            if (isNaN(numValue)) {
+                // 如果不是数字，可能是其他格式
+                return null;
+            }
+            return { type: 'number', color, value: numValue };
+        }
+    } else if (parts.length === 3) {
+        // 处理 wild_draw4 被分割成三部分的情况（虽然不应该发生）
+        const [color, wild, draw4] = parts;
+        if (wild === 'wild' && draw4 === 'draw4') {
+            return { type: 'wild', color: color, action: 'wild_draw4' };
         }
     }
     return null;
