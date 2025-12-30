@@ -931,6 +931,11 @@ createRoomBtn.addEventListener('click', () => {
         return;
     }
     
+    if (!gameState.gameType) {
+        showToast('请先选择游戏！');
+        return;
+    }
+    
     // 生成随机房间号（创建新房间总是使用新房间号）
     const roomId = generateRoomId();
     
@@ -941,7 +946,7 @@ createRoomBtn.addEventListener('click', () => {
     // 清空房间号输入框
     roomIdInput.value = '';
     
-    socket.emit('create_room', { roomId, playerName });
+    socket.emit('create_room', { roomId, playerName, gameType: gameState.gameType });
 });
 
 joinRoomBtn.addEventListener('click', () => {
@@ -967,12 +972,69 @@ joinRoomBtn.addEventListener('click', () => {
     gameState.roomId = roomId;
     currentRoomId.textContent = roomId;
     
-    socket.emit('join_room', { roomId, playerName });
+    if (!gameState.gameType) {
+        showToast('请先选择游戏！');
+        return;
+    }
+    
+    socket.emit('join_room', { roomId, playerName, gameType: gameState.gameType });
     showScreen(waitingScreen);
 });
 
 startGameBtn.addEventListener('click', () => {
     socket.emit('start_game', { roomId: gameState.roomId });
+});
+
+// UNO游戏相关事件处理
+socket.on('uno_game_started', (data) => {
+    gameState.hand = data.hand;
+    gameState.playerIndex = data.playerIndex;
+    gameState.currentPlayerIndex = data.currentPlayerIndex;
+    gameState.players = data.players;
+    
+    // 更新显示
+    document.getElementById('game-room-id').textContent = gameState.roomId;
+    document.getElementById('player-name-display').textContent = gameState.playerName;
+    
+    // 显示UNO游戏界面（需要创建）
+    showScreen(gameScreen);
+    showToast('UNO游戏开始！');
+    
+    // TODO: 渲染UNO手牌和游戏界面
+});
+
+socket.on('uno_can_play', (data) => {
+    // TODO: 显示可出的牌和抽牌按钮
+    if (data.mustDraw) {
+        showToast('必须抽牌！');
+    } else {
+        showToast('可以出牌或抽牌');
+    }
+});
+
+socket.on('uno_card_played', (data) => {
+    showToast(`${gameState.players[data.playerIndex]?.name} 出牌`);
+    // TODO: 更新牌堆显示
+});
+
+socket.on('uno_card_drawn', (data) => {
+    gameState.hand = data.hand;
+    showToast('抽到 ' + data.cards.length + ' 张牌');
+    // TODO: 更新手牌显示
+});
+
+socket.on('uno_game_state', (data) => {
+    gameState.currentPlayerIndex = data.currentPlayerIndex;
+    gameState.players = data.players;
+    // TODO: 更新游戏状态显示
+});
+
+socket.on('uno_game_over', (data) => {
+    if (data.type === 'win') {
+        modalTitle.textContent = '🎉 ' + data.winnerName + ' 获胜！';
+        modalBody.innerHTML = `<p>${data.winnerName} 先出完所有手牌！</p>`;
+        gameOverModal.classList.add('active');
+    }
 });
 
 leaveRoomBtn.addEventListener('click', () => {

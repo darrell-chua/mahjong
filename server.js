@@ -22,6 +22,70 @@ app.use(express.static(path.join(__dirname, 'public')));
 // 房间数据存储
 const rooms = new Map();
 
+// UNO卡牌定义
+const UNO_COLORS = ['red', 'yellow', 'green', 'blue'];
+const UNO_NUMBERS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+const UNO_ACTIONS = ['skip', 'reverse', 'draw2'];
+const UNO_WILDS = ['wild', 'wild_draw4'];
+
+// 生成UNO牌堆
+function createUnoDeck() {
+  const deck = [];
+  
+  // 数字牌（0每种颜色1张，1-9每种颜色2张）
+  UNO_COLORS.forEach(color => {
+    deck.push({ type: 'number', color, value: 0 });
+    for (let i = 1; i <= 9; i++) {
+      deck.push({ type: 'number', color, value: i });
+      deck.push({ type: 'number', color, value: i });
+    }
+  });
+  
+  // 功能牌（跳过、反转、+2，每种颜色2张）
+  UNO_COLORS.forEach(color => {
+    UNO_ACTIONS.forEach(action => {
+      deck.push({ type: 'action', color, action });
+      deck.push({ type: 'action', color, action });
+    });
+  });
+  
+  // 万能牌（变色、+4，每种4张）
+  UNO_WILDS.forEach(wild => {
+    for (let i = 0; i < 4; i++) {
+      deck.push({ type: 'wild', color: null, action: wild });
+    }
+  });
+  
+  return shuffleDeck(deck);
+}
+
+// UNO卡牌转字符串（用于传输）
+function unoCardToString(card) {
+  if (card.type === 'number') {
+    return `${card.color}_${card.value}`;
+  } else if (card.type === 'action') {
+    return `${card.color}_${card.action}`;
+  } else if (card.type === 'wild') {
+    return card.action;
+  }
+}
+
+// 字符串转UNO卡牌
+function stringToUnoCard(str) {
+  const parts = str.split('_');
+  if (parts.length === 1) {
+    // 万能牌
+    return { type: 'wild', color: null, action: str };
+  } else if (parts.length === 2) {
+    const [color, value] = parts;
+    if (UNO_ACTIONS.includes(value)) {
+      return { type: 'action', color, action: value };
+    } else {
+      return { type: 'number', color, value: parseInt(value) };
+    }
+  }
+}
+
 // 麻将牌定义（马来西亚麻将）
 const TILES = {
   // 万（1-9）
@@ -645,13 +709,225 @@ class Room {
   }
 }
 
+// UNO房间类
+class UnoRoom {
+  constructor(roomId, hostId, hostName) {
+    this.roomId = roomId;
+    this.gameType = 'uno';
+    this.players = [{
+      id: hostId,
+      name: hostName,
+      hand: [],
+      score: 0
+    }];
+    this.deck = [];
+    this.discardPile = [];
+    this.currentPlayerIndex = 0;
+    this.direction = 1; // 1: 顺时针, -1: 逆时针
+    this.gameStarted = false;
+    this.currentColor = null; // 当前牌堆顶的颜色
+    this.pendingDraw = 0; // 待抽取的牌数（+2、+4累积）
+    this.wildColorChoice = null; // 万能牌选择的颜色
+  }
+
+  addPlayer(playerId, playerName) {
+    if (this.players.length >= 5) return false; // UNO支持2-5人
+    if (this.gameStarted) return false;
+    
+    this.players.push({
+      id: playerId,
+      name: playerName,
+      hand: [],
+      score: 0
+    });
+    return true;
+  }
+
+  removePlayer(playerId) {
+    const index = this.players.findIndex(p => p.id === playerId);
+    if (index !== -1) {
+      this.players.splice(index, 1);
+      // 如果游戏进行中，调整当前玩家索引
+      if (this.gameStarted && this.currentPlayerIndex >= this.players.length) {
+        this.currentPlayerIndex = 0;
+      }
+    }
+  }
+
+  startGame() {
+    if (this.players.length < 2 || this.players.length > 5) return false;
+    
+    this.gameStarted = true;
+    this.deck = createUnoDeck();
+    this.discardPile = [];
+    this.currentPlayerIndex = 0;
+    this.direction = 1;
+    this.pendingDraw = 0;
+    this.wildColorChoice = null;
+    
+    // 发牌：每人7张
+    this.players.forEach(player => {
+      player.hand = [];
+      for (let i = 0; i < 7; i++) {
+        const card = this.deck.shift();
+        player.hand.push(unoCardToString(card));
+      }
+    });
+    
+    // 翻开第一张牌（不能是功能牌）
+    let firstCard;
+    do {
+      firstCard = this.deck.shift();
+    } while (firstCard.type === 'wild' || firstCard.type === 'action');
+    
+    this.discardPile.push(firstCard);
+    this.currentColor = firstCard.color;
+    
+    return true;
+  }
+
+  getCurrentPlayer() {
+    return this.players[this.currentPlayerIndex];
+  }
+
+  nextTurn() {
+    this.currentPlayerIndex = (this.currentPlayerIndex + this.direction + this.players.length) % this.players.length;
+  }
+
+  canPlayCard(playerId, cardStr) {
+    const player = this.players.find(p => p.id === playerId);
+    if (!player || player.id !== this.getCurrentPlayer().id) return false;
+    
+    const card = stringToUnoCard(cardStr);
+    if (!card) return false;
+    
+    // 检查手牌中是否有这张牌
+    if (!player.hand.includes(cardStr)) return false;
+    
+    const topCard = this.discardPile[this.discardPile.length - 1];
+    
+    // 万能牌总是可以出
+    if (card.type === 'wild') return true;
+    
+    // 检查颜色或类型是否匹配
+    if (card.color === this.currentColor) return true;
+    if (card.type === topCard.type && card.type === 'number' && card.value === topCard.value) return true;
+    if (card.type === topCard.type && card.type === 'action' && card.action === topCard.action) return true;
+    
+    return false;
+  }
+
+  playCard(playerId, cardStr, wildColor = null) {
+    if (!this.canPlayCard(playerId, cardStr)) return false;
+    
+    const player = this.players.find(p => p.id === playerId);
+    const card = stringToUnoCard(cardStr);
+    
+    // 从手牌移除
+    const index = player.hand.indexOf(cardStr);
+    player.hand.splice(index, 1);
+    
+    // 添加到弃牌堆
+    this.discardPile.push(card);
+    
+    // 处理特殊牌
+    if (card.type === 'wild') {
+      this.currentColor = wildColor || UNO_COLORS[0];
+      if (card.action === 'wild_draw4') {
+        this.pendingDraw += 4;
+        this.nextTurn();
+      }
+    } else if (card.type === 'action') {
+      this.currentColor = card.color;
+      if (card.action === 'skip') {
+        this.nextTurn();
+      } else if (card.action === 'reverse') {
+        this.direction *= -1;
+        if (this.players.length === 2) {
+          // 2人游戏时反转等于跳过
+          this.nextTurn();
+        }
+      } else if (card.action === 'draw2') {
+        this.pendingDraw += 2;
+        this.nextTurn();
+      }
+    } else {
+      this.currentColor = card.color;
+    }
+    
+    // 检查是否获胜
+    if (player.hand.length === 0) {
+      return { win: true };
+    }
+    
+    // 正常进入下一回合
+    if (this.pendingDraw === 0) {
+      this.nextTurn();
+    }
+    
+    return { win: false };
+  }
+
+  drawCard(playerId) {
+    const player = this.players.find(p => p.id === playerId);
+    if (!player || player.id !== this.getCurrentPlayer().id) return null;
+    
+    // 如果有待抽取的牌，必须抽取
+    if (this.pendingDraw > 0) {
+      const cards = [];
+      for (let i = 0; i < this.pendingDraw; i++) {
+        if (this.deck.length === 0) {
+          // 牌堆空了，重新洗牌（保留最后一张弃牌）
+          const lastCard = this.discardPile.pop();
+          this.deck = shuffleDeck(this.discardPile.map(c => unoCardToString(c)).map(s => stringToUnoCard(s)));
+          this.discardPile = [lastCard];
+        }
+        const card = this.deck.shift();
+        cards.push(unoCardToString(card));
+        player.hand.push(unoCardToString(card));
+      }
+      this.pendingDraw = 0;
+      this.nextTurn();
+      return cards;
+    } else {
+      // 正常抽一张
+      if (this.deck.length === 0) {
+        const lastCard = this.discardPile.pop();
+        this.deck = shuffleDeck(this.discardPile.map(c => unoCardToString(c)).map(s => stringToUnoCard(s)));
+        this.discardPile = [lastCard];
+      }
+      const card = this.deck.shift();
+      player.hand.push(unoCardToString(card));
+      return [unoCardToString(card)];
+    }
+  }
+
+  getPlayableCards(playerId) {
+    const player = this.players.find(p => p.id === playerId);
+    if (!player) return [];
+    
+    return player.hand.filter(cardStr => {
+      const card = stringToUnoCard(cardStr);
+      if (card.type === 'wild') return true;
+      if (card.color === this.currentColor) return true;
+      
+      const topCard = this.discardPile[this.discardPile.length - 1];
+      if (card.type === topCard.type) {
+        if (card.type === 'number' && card.value === topCard.value) return true;
+        if (card.type === 'action' && card.action === topCard.action) return true;
+      }
+      return false;
+    });
+  }
+}
+
 // Socket.IO 连接处理
 io.on('connection', (socket) => {
   console.log('新玩家连接:', socket.id);
 
   // 创建房间
   socket.on('create_room', (data) => {
-    const { roomId, playerName } = data;
+    const { roomId, playerName, gameType } = data;
     
     // 验证房间号格式（6位字符）
     if (!roomId || roomId.length !== 6 || !/^[A-Z0-9]{6}$/.test(roomId)) {
@@ -664,16 +940,23 @@ io.on('connection', (socket) => {
       return;
     }
     
-    const room = new Room(roomId, socket.id, playerName);
+    // 根据游戏类型创建不同的房间
+    let room;
+    if (gameType === 'uno') {
+      room = new UnoRoom(roomId, socket.id, playerName);
+    } else {
+      room = new Room(roomId, socket.id, playerName);
+    }
     rooms.set(roomId, room);
     socket.join(roomId);
     
     socket.emit('room_created', {
       roomId,
+      gameType: gameType || 'mahjong',
       players: room.players.map(p => ({ id: p.id, name: p.name, score: p.score }))
     });
     
-    console.log(`房间创建: ${roomId}, 房主: ${playerName}`);
+    console.log(`房间创建: ${roomId}, 房主: ${playerName}, 游戏类型: ${gameType || 'mahjong'}`);
   });
 
   // 加入房间
@@ -746,13 +1029,63 @@ io.on('connection', (socket) => {
     console.log(`游戏开始: 房间 ${roomId}`);
   });
 
-  // 摸牌
+  // 摸牌（麻将）/ 抽牌（UNO）
   socket.on('draw_tile', (data) => {
     const { roomId } = data;
     const room = rooms.get(roomId);
     
     if (!room || !room.gameStarted) return;
     
+    // UNO游戏
+    if (room.gameType === 'uno') {
+      const currentPlayer = room.getCurrentPlayer();
+      if (currentPlayer.id !== socket.id) {
+        socket.emit('error', { message: '还没轮到你' });
+        return;
+      }
+      
+      const cards = room.drawCard(socket.id);
+      if (!cards || cards.length === 0) {
+        socket.emit('error', { message: '无法抽牌' });
+        return;
+      }
+      
+      const player = room.players.find(p => p.id === socket.id);
+      
+      // 通知玩家抽到的牌
+      socket.emit('uno_card_drawn', {
+        cards: cards,
+        hand: player.hand
+      });
+      
+      // 更新游戏状态
+      io.to(roomId).emit('uno_game_state', {
+        currentPlayerIndex: room.currentPlayerIndex,
+        players: room.players.map(p => ({
+          id: p.id,
+          name: p.name,
+          handCount: p.hand.length,
+          score: p.score
+        })),
+        topCard: unoCardToString(room.discardPile[room.discardPile.length - 1]),
+        currentColor: room.currentColor,
+        deckCount: room.deck.length,
+        direction: room.direction,
+        pendingDraw: room.pendingDraw
+      });
+      
+      // 通知当前玩家可以出牌
+      const currentPlayerId = room.players[room.currentPlayerIndex].id;
+      const playableCards = room.getPlayableCards(currentPlayerId);
+      io.to(currentPlayerId).emit('uno_can_play', {
+        playableCards: playableCards,
+        mustDraw: room.pendingDraw > 0
+      });
+      
+      return;
+    }
+    
+    // 麻将游戏
     const currentPlayer = room.getCurrentPlayer();
     if (currentPlayer.id !== socket.id) {
       socket.emit('error', { message: '还没轮到你' });
@@ -809,13 +1142,79 @@ io.on('connection', (socket) => {
     });
   });
 
-  // 出牌
+  // 出牌（麻将/UNO）
   socket.on('play_tile', (data) => {
-    const { roomId, tile } = data;
+    const { roomId, tile, wildColor } = data;
     const room = rooms.get(roomId);
     
     if (!room || !room.gameStarted) return;
     
+    // UNO游戏
+    if (room.gameType === 'uno') {
+      const result = room.playCard(socket.id, tile, wildColor);
+      
+      if (!result) {
+        socket.emit('error', { message: '不能出这张牌' });
+        return;
+      }
+      
+      const player = room.players.find(p => p.id === socket.id);
+      
+      // 广播出牌
+      io.to(roomId).emit('uno_card_played', {
+        playerId: socket.id,
+        playerIndex: room.currentPlayerIndex,
+        card: tile,
+        topCard: unoCardToString(room.discardPile[room.discardPile.length - 1]),
+        currentColor: room.currentColor,
+        wildColor: wildColor
+      });
+      
+      // 如果获胜
+      if (result.win) {
+        io.to(roomId).emit('uno_game_over', {
+          type: 'win',
+          winnerId: socket.id,
+          winnerIndex: room.currentPlayerIndex,
+          winnerName: player.name,
+          hand: player.hand
+        });
+        return;
+      }
+      
+      // 更新游戏状态
+      io.to(roomId).emit('uno_game_state', {
+        currentPlayerIndex: room.currentPlayerIndex,
+        players: room.players.map(p => ({
+          id: p.id,
+          name: p.name,
+          handCount: p.hand.length,
+          score: p.score
+        })),
+        topCard: unoCardToString(room.discardPile[room.discardPile.length - 1]),
+        currentColor: room.currentColor,
+        deckCount: room.deck.length,
+        direction: room.direction,
+        pendingDraw: room.pendingDraw
+      });
+      
+      // 通知当前玩家可以出牌
+      const currentPlayerId = room.players[room.currentPlayerIndex].id;
+      const playableCards = room.getPlayableCards(currentPlayerId);
+      io.to(currentPlayerId).emit('uno_can_play', {
+        playableCards: playableCards,
+        mustDraw: room.pendingDraw > 0
+      });
+      
+      // 更新出牌玩家的手牌
+      socket.emit('uno_hand_updated', {
+        hand: player.hand
+      });
+      
+      return;
+    }
+    
+    // 麻将游戏
     const currentPlayer = room.getCurrentPlayer();
     if (currentPlayer.id !== socket.id) {
       socket.emit('error', { message: '还没轮到你' });
