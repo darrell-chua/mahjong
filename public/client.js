@@ -1,5 +1,13 @@
 // Socket.IO 连接（使用同源，避免不同环境下的连接问题）
-const socket = io();
+// 添加连接配置，支持自动重连
+const socket = io({
+  reconnection: true,
+  reconnectionDelay: 1000,
+  reconnectionDelayMax: 5000,
+  reconnectionAttempts: 5,
+  timeout: 20000,
+  transports: ['websocket', 'polling']
+});
 
 // 全局状态
 let gameState = {
@@ -293,8 +301,43 @@ function updateGameState(data) {
 
 // Socket 事件监听
 socket.on('connect', () => {
-    console.log('已连接到服务器');
+    console.log('✅ 已连接到服务器');
+    console.log('Socket ID:', socket.id);
     gameState.playerId = socket.id;
+    showToast('已连接到服务器', 2000);
+});
+
+socket.on('connect_error', (error) => {
+    console.error('❌ 连接错误:', error);
+    showToast('连接失败: ' + error.message, 5000);
+    console.log('💡 提示: 请确保服务器正在运行 (npm start)');
+});
+
+socket.on('disconnect', (reason) => {
+    console.warn('⚠️ 已断开连接:', reason);
+    if (reason === 'io server disconnect') {
+        // 服务器主动断开，需要手动重连
+        socket.connect();
+    }
+    showToast('连接已断开: ' + reason, 3000);
+});
+
+socket.on('reconnect', (attemptNumber) => {
+    console.log('✅ 重新连接成功 (尝试次数: ' + attemptNumber + ')');
+    showToast('重新连接成功', 2000);
+});
+
+socket.on('reconnect_attempt', (attemptNumber) => {
+    console.log('🔄 正在尝试重新连接... (第 ' + attemptNumber + ' 次)');
+});
+
+socket.on('reconnect_error', (error) => {
+    console.error('❌ 重连失败:', error);
+});
+
+socket.on('reconnect_failed', () => {
+    console.error('❌ 重连失败，已达到最大尝试次数');
+    showToast('无法连接到服务器，请刷新页面重试', 10000);
 });
 
 socket.on('error', (data) => {

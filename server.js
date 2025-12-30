@@ -5,7 +5,16 @@ const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
-const io = socketIo(server);
+
+// Socket.IO 配置 - 支持跨域连接
+const io = socketIo(server, {
+  cors: {
+    origin: "*", // 允许所有来源（生产环境建议指定具体域名）
+    methods: ["GET", "POST"],
+    credentials: true
+  },
+  transports: ['websocket', 'polling'] // 支持多种传输方式
+});
 
 // 静态文件服务
 app.use(express.static(path.join(__dirname, 'public')));
