@@ -261,6 +261,21 @@ class Room {
     return count >= 3;
   }
 
+  // 检查是否可以暗杠（手牌有4张相同的牌）
+  canSelfKong(playerId) {
+    const player = this.players.find(p => p.id === playerId);
+    if (!player) return false;
+    
+    // 统计手牌中每种牌的数量
+    const counts = {};
+    player.hand.forEach(tile => {
+      counts[tile] = (counts[tile] || 0) + 1;
+    });
+    
+    // 检查是否有4张相同的牌
+    return Object.values(counts).some(count => count === 4);
+  }
+
   // 检查是否可以执行某个操作（考虑优先级）
   canExecuteAction(playerId, action) {
     if (!this.pendingClaim) return true; // 没有待处理的操作
@@ -405,6 +420,37 @@ class Room {
     
     // 杠牌的玩家继续出牌（不进入下一回合）
     this.currentPlayerIndex = this.players.findIndex(p => p.id === playerId);
+    
+    return drawnTile; // 返回摸到的牌，让前端知道
+  }
+
+  // 执行暗杠（手牌4张相同牌）
+  performSelfKong(playerId, tile) {
+    const player = this.players.find(p => p.id === playerId);
+    if (!player) return false;
+    
+    // 检查手牌中是否有4张该牌
+    const count = player.hand.filter(t => t === tile).length;
+    if (count !== 4) return false;
+    
+    // 从手牌中移除4张相同的牌
+    for (let i = 0; i < 4; i++) {
+      const index = player.hand.indexOf(tile);
+      player.hand.splice(index, 1);
+    }
+    
+    // 添加到已杠牌组
+    player.melds.push({ type: 'kong', tiles: [tile, tile, tile, tile] });
+    
+    // 暗杠后摸一张牌
+    const drawnTile = this.wall.shift();
+    if (drawnTile) {
+      player.hand.push(drawnTile);
+      player.hand = sortTiles(player.hand);
+    }
+    
+    // 手牌重新排序
+    player.hand = sortTiles(player.hand);
     
     return drawnTile; // 返回摸到的牌，让前端知道
   }
@@ -727,15 +773,26 @@ io.on('connection', (socket) => {
     // 检查是否可以自摸
     const canSelfWin = room.checkWin(socket.id, true);
     
+    // 检查是否可以暗杠
+    const canSelfKong = room.canSelfKong(socket.id);
+    
     socket.emit('tile_drawn', { 
       tile,
-      canSelfWin: canSelfWin !== null
+      canSelfWin: canSelfWin !== null,
+      canSelfKong: canSelfKong
     });
     
     // 如果可以自摸，通知玩家
     if (canSelfWin) {
       socket.emit('can_self_win', {
         canWin: true
+      });
+    }
+    
+    // 如果可以暗杠，通知玩家
+    if (canSelfKong) {
+      socket.emit('can_self_kong', {
+        canKong: true
       });
     }
     
@@ -841,6 +898,9 @@ io.on('connection', (socket) => {
     if (!room.pendingClaim || room.canExecuteAction(socket.id, 'pong')) {
       room.pendingClaim = { playerId: socket.id, action: 'pong', timestamp: Date.now() };
       
+      // 在调用 performPong 之前保存被碰的牌（因为 performPong 会将 lastDiscard 设为 null）
+      const claimedTile = room.lastDiscard ? room.lastDiscard.tile : null;
+      
       if (room.performPong(socket.id)) {
         const player = room.players.find(p => p.id === socket.id);
         
@@ -852,6 +912,13 @@ io.on('connection', (socket) => {
           playerIndex: room.currentPlayerIndex,
           melds: player.melds
         });
+        
+        // 通知所有客户端从弃牌池移除该牌
+        if (claimedTile) {
+          io.to(roomId).emit('tile_removed_from_pool', {
+            tile: claimedTile
+          });
+        }
         
         socket.emit('update_hand', { hand: player.hand });
         
@@ -907,6 +974,9 @@ io.on('connection', (socket) => {
     if (!room.pendingClaim || room.canExecuteAction(socket.id, 'chow')) {
       room.pendingClaim = { playerId: socket.id, action: 'chow', timestamp: Date.now() };
       
+      // 在调用 performChow 之前保存被吃的牌（因为 performChow 会将 lastDiscard 设为 null）
+      const claimedTile = room.lastDiscard ? room.lastDiscard.tile : null;
+      
       if (room.performChow(socket.id, chosenCombo)) {
         const player = room.players.find(p => p.id === socket.id);
         
@@ -918,6 +988,13 @@ io.on('connection', (socket) => {
           playerIndex: room.currentPlayerIndex,
           melds: player.melds
         });
+        
+        // 通知所有客户端从弃牌池移除该牌
+        if (claimedTile) {
+          io.to(roomId).emit('tile_removed_from_pool', {
+            tile: claimedTile
+          });
+        }
         
         socket.emit('update_hand', { hand: player.hand });
         
@@ -960,6 +1037,9 @@ io.on('connection', (socket) => {
     if (!room.pendingClaim || room.canExecuteAction(socket.id, 'kong')) {
       room.pendingClaim = { playerId: socket.id, action: 'kong', timestamp: Date.now() };
       
+      // 在调用 performKong 之前保存被杠的牌（因为 performKong 会将 lastDiscard 设为 null）
+      const claimedTile = room.lastDiscard ? room.lastDiscard.tile : null;
+      
       const drawnTile = room.performKong(socket.id);
       
       if (drawnTile) {
@@ -976,6 +1056,13 @@ io.on('connection', (socket) => {
           playerIndex: room.currentPlayerIndex,
           melds: player.melds
         });
+        
+        // 通知所有客户端从弃牌池移除该牌
+        if (claimedTile) {
+          io.to(roomId).emit('tile_removed_from_pool', {
+            tile: claimedTile
+          });
+        }
         
         socket.emit('update_hand', { hand: player.hand });
         socket.emit('tile_drawn_after_kong', { 
@@ -1011,6 +1098,96 @@ io.on('connection', (socket) => {
       }
     } else {
       socket.emit('error', { message: '有其他玩家正在操作，请稍候' });
+    }
+  });
+
+  // 暗杠（手牌4张相同牌）
+  socket.on('claim_self_kong', (data) => {
+    const { roomId, tile } = data;
+    const room = rooms.get(roomId);
+    
+    if (!room || !room.gameStarted) return;
+    
+    const currentPlayer = room.getCurrentPlayer();
+    if (currentPlayer.id !== socket.id) {
+      socket.emit('error', { message: '还没轮到你' });
+      return;
+    }
+    
+    // 检查是否可以暗杠
+    if (!room.canSelfKong(socket.id)) {
+      socket.emit('error', { message: '不能暗杠' });
+      return;
+    }
+    
+    // 如果没有指定牌，自动找到可以暗杠的牌
+    let kongTile = tile;
+    if (!kongTile) {
+      const player = room.players.find(p => p.id === socket.id);
+      const counts = {};
+      player.hand.forEach(t => {
+        counts[t] = (counts[t] || 0) + 1;
+      });
+      
+      // 找到第一张有4张的牌
+      for (const [t, count] of Object.entries(counts)) {
+        if (count === 4) {
+          kongTile = t;
+          break;
+        }
+      }
+    }
+    
+    if (!kongTile) {
+      socket.emit('error', { message: '没有可暗杠的牌' });
+      return;
+    }
+    
+    const drawnTile = room.performSelfKong(socket.id, kongTile);
+    
+    if (drawnTile !== false) {
+      const player = room.players.find(p => p.id === socket.id);
+      
+      // 检查暗杠后是否可以自摸
+      const canSelfWin = room.checkWin(socket.id, true);
+      
+      io.to(roomId).emit('self_kong_claimed', {
+        playerId: socket.id,
+        playerIndex: room.currentPlayerIndex,
+        melds: player.melds,
+        tile: kongTile
+      });
+      
+      socket.emit('update_hand', { hand: player.hand });
+      socket.emit('tile_drawn_after_kong', { 
+        tile: drawnTile,
+        message: '暗杠后摸牌，请出牌',
+        canSelfWin: canSelfWin !== null
+      });
+      
+      // 如果可以自摸，通知玩家
+      if (canSelfWin) {
+        socket.emit('can_self_win', {
+          canWin: true
+        });
+      } else {
+        // 如果不能自摸，通知暗杠玩家可以直接出牌
+        socket.emit('can_play', { message: '暗杠后已摸牌，请出牌' });
+      }
+      
+      io.to(roomId).emit('game_state', {
+        currentPlayerIndex: room.currentPlayerIndex,
+        wallCount: room.wall.length,
+        players: room.players.map(p => ({
+          id: p.id,
+          name: p.name,
+          handCount: p.hand.length,
+          discarded: p.discarded,
+          melds: p.melds
+        }))
+      });
+    } else {
+      socket.emit('error', { message: '暗杠失败' });
     }
   });
 
@@ -1161,6 +1338,43 @@ io.on('connection', (socket) => {
     console.log(`继续游戏: 房间 ${roomId}`);
   });
 
+  // 主动退出房间
+  socket.on('leave_room', (data) => {
+    const { roomId } = data;
+    const room = rooms.get(roomId);
+    
+    if (!room) return;
+    
+    const playerIndex = room.players.findIndex(p => p.id === socket.id);
+    if (playerIndex === -1) return;
+    
+    const wasInGame = room.gameStarted;
+    room.removePlayer(socket.id);
+    socket.leave(roomId);
+    
+    if (room.players.length === 0) {
+      rooms.delete(roomId);
+      console.log(`房间 ${roomId} 已清空`);
+    } else {
+      // 如果游戏正在进行，停止游戏并让其他玩家返回等待界面
+      if (wasInGame) {
+        room.gameStarted = false;
+        room.lastDiscard = null;
+        room.pendingClaim = null;
+        room.currentPlayerIndex = 0;
+        room.dealerIndex = 0;
+      }
+      
+      io.to(roomId).emit('player_left', {
+        playerId: socket.id,
+        players: room.players.map(p => ({ id: p.id, name: p.name, score: p.score })),
+        gameStopped: wasInGame // 标记游戏是否被停止
+      });
+    }
+    
+    console.log(`玩家退出房间: ${roomId}`);
+  });
+
   // 断线处理
   socket.on('disconnect', () => {
     console.log('玩家断线:', socket.id);
@@ -1169,15 +1383,26 @@ io.on('connection', (socket) => {
     rooms.forEach((room, roomId) => {
       const playerIndex = room.players.findIndex(p => p.id === socket.id);
       if (playerIndex !== -1) {
+        const wasInGame = room.gameStarted;
         room.removePlayer(socket.id);
         
         if (room.players.length === 0) {
           rooms.delete(roomId);
           console.log(`房间 ${roomId} 已清空`);
         } else {
+          // 如果游戏正在进行，停止游戏并让其他玩家返回等待界面
+          if (wasInGame) {
+            room.gameStarted = false;
+            room.lastDiscard = null;
+            room.pendingClaim = null;
+            room.currentPlayerIndex = 0;
+            room.dealerIndex = 0;
+          }
+          
           io.to(roomId).emit('player_left', {
             playerId: socket.id,
-            players: room.players.map(p => ({ id: p.id, name: p.name, score: p.score }))
+            players: room.players.map(p => ({ id: p.id, name: p.name, score: p.score })),
+            gameStopped: wasInGame // 标记游戏是否被停止
           });
         }
       }

@@ -25,7 +25,9 @@ let gameState = {
     // 本回合是否已摸过牌（用于允许摸后出牌，即使手牌绝对数量不是14）
     hasDrawnThisTurn: false,
     // 操作超时定时器
-    claimTimeout: null
+    claimTimeout: null,
+    // 是否可以暗杠
+    canSelfKong: false
 };
 
 // 麻将牌显示映射
@@ -57,6 +59,7 @@ const joinRoomBtn = document.getElementById('join-room-btn');
 const currentRoomId = document.getElementById('current-room-id');
 const startGameBtn = document.getElementById('start-game-btn');
 const leaveRoomBtn = document.getElementById('leave-room-btn');
+const leaveGameBtn = document.getElementById('leave-game-btn');
 
 const playerHand = document.getElementById('player-hand');
 const playerMelds = document.getElementById('player-melds');
@@ -394,6 +397,39 @@ socket.on('player_joined', (data) => {
 socket.on('player_left', (data) => {
     showToast('有玩家离开了房间');
     
+    // 如果游戏正在进行且被停止，返回等待界面
+    if (data.gameStopped && gameScreen.classList.contains('active')) {
+        showScreen(waitingScreen);
+        showToast('有玩家退出，游戏已停止，等待新玩家加入');
+        
+        // 重置游戏状态
+        gameState.hand = [];
+        gameState.canClaim = null;
+        gameState.selectedTile = null;
+        gameState.canPlayWithoutDraw = false;
+        gameState.hasDrawnThisTurn = false;
+        gameState.canSelfKong = false;
+        
+        // 清空手牌显示
+        playerHand.innerHTML = '';
+        playerMelds.innerHTML = '';
+        
+        // 清空弃牌池
+        const poolTiles = document.querySelector('.pool-tiles');
+        if (poolTiles) {
+            poolTiles.innerHTML = '';
+        }
+        
+        // 隐藏操作按钮
+        actionButtons.style.display = 'none';
+        drawButtonContainer.style.display = 'none';
+        
+        // 关闭游戏结束模态框（如果打开）
+        if (gameOverModal.classList.contains('active')) {
+            gameOverModal.classList.remove('active');
+        }
+    }
+    
     // 更新游戏状态中的玩家列表
     gameState.players = data.players.map(p => ({
         id: p.id,
@@ -451,6 +487,17 @@ socket.on('player_left', (data) => {
             }
         }
     });
+    
+    // 更新开始游戏按钮状态
+    if (waitingScreen.classList.contains('active')) {
+        if (data.players.length === 4) {
+            startGameBtn.disabled = false;
+            startGameBtn.textContent = '开始游戏';
+        } else {
+            startGameBtn.disabled = true;
+            startGameBtn.textContent = `开始游戏 (${data.players.length}/4)`;
+        }
+    }
 });
 
 socket.on('game_started', (data) => {
@@ -523,6 +570,18 @@ socket.on('tile_drawn', (data) => {
         document.getElementById('btn-pass').style.display = 'inline-block';
         showToast('可以自摸胡牌！');
     }
+    // 如果可以暗杠，显示暗杠按钮（优先级低于胡）
+    else if (data.canSelfKong) {
+        actionButtons.style.display = 'flex';
+        document.getElementById('btn-chow').style.display = 'none';
+        document.getElementById('btn-pong').style.display = 'none';
+        document.getElementById('btn-kong').style.display = 'none';
+        document.getElementById('btn-win').style.display = 'none';
+        document.getElementById('btn-pass').style.display = 'inline-block';
+        // 标记这是暗杠模式
+        gameState.canSelfKong = true;
+        showToast('可以暗杠！');
+    }
 });
 
 // 服务器通知可以自摸
@@ -535,6 +594,22 @@ socket.on('can_self_win', (data) => {
         document.getElementById('btn-win').style.display = 'inline-block';
         document.getElementById('btn-pass').style.display = 'inline-block';
         showToast('可以自摸胡牌！');
+    }
+});
+
+// 服务器通知可以暗杠
+socket.on('can_self_kong', (data) => {
+    if (data.canKong) {
+        actionButtons.style.display = 'flex';
+        document.getElementById('btn-chow').style.display = 'none';
+        document.getElementById('btn-pong').style.display = 'none';
+        document.getElementById('btn-kong').style.display = 'inline-block';
+        document.getElementById('btn-kong').textContent = '暗杠';
+        document.getElementById('btn-win').style.display = 'none';
+        document.getElementById('btn-pass').style.display = 'inline-block';
+        // 标记这是暗杠模式
+        gameState.canSelfKong = true;
+        showToast('可以暗杠！');
     }
 });
 
@@ -552,6 +627,21 @@ socket.on('tile_played', (data) => {
     showGameNotification(`${gameState.players[data.playerIndex].name} 打出 ${TILE_DISPLAY[data.tile]}`);
 });
 
+// 从弃牌池移除牌（当被碰/吃/杠时）
+socket.on('tile_removed_from_pool', (data) => {
+    const poolTiles = document.querySelector('.pool-tiles');
+    if (!poolTiles) return;
+    
+    // 从后往前查找匹配的牌（因为被碰/吃/杠的总是最后打出的牌）
+    const tiles = poolTiles.querySelectorAll('[data-tile]');
+    for (let i = tiles.length - 1; i >= 0; i--) {
+        if (tiles[i].getAttribute('data-tile') === data.tile) {
+            tiles[i].remove();
+            break; // 只移除第一张匹配的牌
+        }
+    }
+});
+
 socket.on('can_claim', (data) => {
     gameState.canClaim = data;
     
@@ -561,8 +651,12 @@ socket.on('can_claim', (data) => {
     document.getElementById('btn-chow').style.display = data.canChow ? 'inline-block' : 'none';
     document.getElementById('btn-pong').style.display = data.canPong ? 'inline-block' : 'none';
     document.getElementById('btn-kong').style.display = data.canKong ? 'inline-block' : 'none';
+    document.getElementById('btn-kong').textContent = '杠'; // 明杠
     document.getElementById('btn-win').style.display = data.canWin ? 'inline-block' : 'none';
     document.getElementById('btn-pass').style.display = 'inline-block';
+    
+    // 重置暗杠标记（这是明杠场景）
+    gameState.canSelfKong = false;
     
     // 设置超时自动过
     if (gameState.claimTimeout) {
@@ -605,6 +699,9 @@ socket.on('next_turn', (data) => {
     // 进入新回合，需摸牌前不可直接出牌
     gameState.canPlayWithoutDraw = false;
     gameState.hasDrawnThisTurn = false;
+    // 重置暗杠标记
+    gameState.canSelfKong = false;
+    document.getElementById('btn-kong').textContent = '杠';
 });
 
 socket.on('pong_claimed', (data) => {
@@ -671,6 +768,35 @@ socket.on('kong_claimed', (data) => {
         // 杠后服务器会自动摸一张，之后允许出牌
         gameState.canPlayWithoutDraw = true;
     }
+    // 重置杠按钮文本
+    document.getElementById('btn-kong').textContent = '杠';
+});
+
+// 暗杠成功
+socket.on('self_kong_claimed', (data) => {
+    if (data.playerId === socket.id) {
+        renderHand();
+        showToast('暗杠成功！已自动摸牌，请出牌');
+    } else {
+        showToast(`${gameState.players[data.playerIndex]?.name} 暗杠！`);
+    }
+    
+    updateGameState({
+        currentPlayerIndex: data.playerIndex,
+        players: gameState.players
+    });
+    
+    actionButtons.style.display = 'none';
+    
+    // 如果是自己暗杠，不显示摸牌按钮（已经自动摸牌了）
+    if (data.playerId === socket.id) {
+        drawButtonContainer.style.display = 'none';
+        // 暗杠后服务器会自动摸一张，之后允许出牌
+        gameState.canPlayWithoutDraw = true;
+    }
+    // 重置标记和按钮文本
+    gameState.canSelfKong = false;
+    document.getElementById('btn-kong').textContent = '杠';
 });
 
 // 杠牌后摸牌的通知
@@ -847,8 +973,23 @@ startGameBtn.addEventListener('click', () => {
 });
 
 leaveRoomBtn.addEventListener('click', () => {
+    if (gameState.roomId) {
+        socket.emit('leave_room', { roomId: gameState.roomId });
+    }
     window.location.reload();
 });
+
+// 游戏界面退出按钮
+if (leaveGameBtn) {
+    leaveGameBtn.addEventListener('click', () => {
+        if (confirm('确定要退出房间吗？')) {
+            if (gameState.roomId) {
+                socket.emit('leave_room', { roomId: gameState.roomId });
+            }
+            window.location.reload();
+        }
+    });
+}
 
 document.getElementById('btn-draw').addEventListener('click', () => {
     socket.emit('draw_tile', { roomId: gameState.roomId });
@@ -888,7 +1029,18 @@ document.getElementById('btn-kong').addEventListener('click', () => {
         gameState.claimTimeout = null;
     }
     
-    socket.emit('claim_kong', { roomId: gameState.roomId });
+    // 判断是暗杠还是明杠
+    if (gameState.canSelfKong) {
+        // 暗杠：手牌4张相同牌
+        socket.emit('claim_self_kong', { 
+            roomId: gameState.roomId,
+            tile: null // 服务器会自动找到可以暗杠的牌
+        });
+        gameState.canSelfKong = false; // 重置标记
+    } else {
+        // 明杠：杠别人打出的牌
+        socket.emit('claim_kong', { roomId: gameState.roomId });
+    }
     actionButtons.style.display = 'none';
 });
 
@@ -998,4 +1150,5 @@ roomIdInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') {
         joinRoomBtn.click();
     }
+});
 });
