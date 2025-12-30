@@ -27,7 +27,9 @@ let gameState = {
     // 操作超时定时器
     claimTimeout: null,
     // 是否可以暗杠
-    canSelfKong: false
+    canSelfKong: false,
+    // 选择的游戏类型
+    gameType: null // 'mahjong' 或 'uno'
 };
 
 // 麻将牌显示映射
@@ -47,6 +49,7 @@ const TILE_DISPLAY = {
 };
 
 // DOM 元素
+const gameSelectionScreen = document.getElementById('game-selection-screen');
 const loginScreen = document.getElementById('login-screen');
 const waitingScreen = document.getElementById('waiting-screen');
 const gameScreen = document.getElementById('game-screen');
@@ -1151,3 +1154,71 @@ roomIdInput.addEventListener('keypress', (e) => {
         joinRoomBtn.click();
     }
 });
+
+// 游戏选择相关
+const gameSelectBtns = document.querySelectorAll('.game-select-btn');
+const backToSelectionBtn = document.getElementById('back-to-selection-btn');
+const selectedGameTitle = document.getElementById('selected-game-title');
+const selectedGameSubtitle = document.getElementById('selected-game-subtitle');
+const gameInstructionsList = document.getElementById('game-instructions-list');
+
+// 游戏配置
+const gameConfigs = {
+    mahjong: {
+        title: '🀄 马来西亚麻将',
+        subtitle: '四人联机对战',
+        instructions: [
+            '4人对战，每人13张手牌',
+            '支持吃、碰、杠、胡操作',
+            '支持平胡、碰碰胡、清一色等番型',
+            '轮流出牌，先胡牌者获胜'
+        ]
+    },
+    uno: {
+        title: '🃏 UNO',
+        subtitle: '经典卡牌游戏',
+        instructions: [
+            '2-4人对战，每人7张手牌',
+            '按颜色或数字出牌',
+            '特殊功能牌：跳过、反转、+2、+4、变色',
+            '先出完手牌者获胜'
+        ]
+    }
+};
+
+// 游戏选择按钮事件
+gameSelectBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+        const gameType = btn.getAttribute('data-game');
+        gameState.gameType = gameType;
+        
+        // 更新登录界面内容
+        const config = gameConfigs[gameType];
+        if (config) {
+            selectedGameTitle.textContent = config.title;
+            selectedGameSubtitle.textContent = config.subtitle;
+            
+            // 更新游戏说明
+            gameInstructionsList.innerHTML = '';
+            config.instructions.forEach(instruction => {
+                const li = document.createElement('li');
+                li.textContent = instruction;
+                gameInstructionsList.appendChild(li);
+            });
+        }
+        
+        // 切换到登录界面
+        showScreen(loginScreen);
+    });
+});
+
+// 返回选择界面
+if (backToSelectionBtn) {
+    backToSelectionBtn.addEventListener('click', () => {
+        showScreen(gameSelectionScreen);
+        // 清空输入
+        playerNameInput.value = '';
+        roomIdInput.value = '';
+        gameState.gameType = null;
+    });
+}

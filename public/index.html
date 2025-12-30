@@ -3,15 +3,52 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🀄 马来西亚麻将 - 在线联机</title>
+    <title>在线游戏平台 - 麻将 & UNO</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
+    <!-- 游戏选择界面 -->
+    <div id="game-selection-screen" class="screen active">
+        <div class="game-selection-container">
+            <h1 class="platform-title">🎮 在线游戏平台</h1>
+            <p class="subtitle">选择你想玩的游戏</p>
+            
+            <div class="game-cards">
+                <div class="game-card" id="mahjong-card">
+                    <div class="game-icon">🀄</div>
+                    <h2 class="game-name">马来西亚麻将</h2>
+                    <p class="game-description">四人联机对战</p>
+                    <ul class="game-features">
+                        <li>✓ 支持吃、碰、杠、胡</li>
+                        <li>✓ 多种番型计算</li>
+                        <li>✓ 实时对战</li>
+                    </ul>
+                    <button class="btn btn-primary game-select-btn" data-game="mahjong">开始游戏</button>
+                </div>
+                
+                <div class="game-card" id="uno-card">
+                    <div class="game-icon">🃏</div>
+                    <h2 class="game-name">UNO</h2>
+                    <p class="game-description">经典卡牌游戏</p>
+                    <ul class="game-features">
+                        <li>✓ 2-4人对战</li>
+                        <li>✓ 特殊功能牌</li>
+                        <li>✓ 快速匹配</li>
+                    </ul>
+                    <button class="btn btn-primary game-select-btn" data-game="uno">开始游戏</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- 登录界面 -->
-    <div id="login-screen" class="screen active">
+    <div id="login-screen" class="screen">
         <div class="login-container">
-            <h1 class="game-title">🀄 马来西亚麻将</h1>
-            <p class="subtitle">四人联机对战</p>
+            <div class="back-button-container">
+                <button id="back-to-selection-btn" class="back-btn">← 返回选择游戏</button>
+            </div>
+            <h1 class="game-title" id="selected-game-title">🀄 马来西亚麻将</h1>
+            <p class="subtitle" id="selected-game-subtitle">四人联机对战</p>
             
             <div class="login-form">
                 <input type="text" id="player-name" placeholder="输入你的昵称" maxlength="12" />
@@ -24,9 +61,9 @@
                 </div>
             </div>
             
-            <div class="instructions">
+            <div class="instructions" id="game-instructions">
                 <h3>游戏说明</h3>
-                <ul>
+                <ul id="game-instructions-list">
                     <li>4人对战，每人13张手牌</li>
                     <li>支持吃、碰、杠、胡操作</li>
                     <li>支持平胡、碰碰胡、清一色等番型</li>
